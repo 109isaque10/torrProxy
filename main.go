@@ -12,6 +12,8 @@ import (
 	"torrProxy/types"
 
 	_ "github.com/joho/godotenv/autoload"
+	_ "golang.org/x/crypto/x509roots/fallback"
+
 	"go.uber.org/zap"
 )
 

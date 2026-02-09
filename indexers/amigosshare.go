@@ -61,7 +61,11 @@ func (a *AmigosShareIndexer) EnsureClient() {
 
 func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 	// Check if already logged in before attempting login
-	if logged, _ := a.isLoggedIn(ctx); logged {
+	if logged, err := a.isLoggedIn(ctx); err != nil {
+		// If we can't check login status, proceed with login attempt
+		// (could be transient network issue)
+		return a.login(ctx)
+	} else if logged {
 		return nil
 	}
 	return a.login(ctx)
@@ -108,7 +112,10 @@ func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	}
 	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
+	if err != nil {
+		return false, err
+	}
 	req.Header.Set("User-Agent", "torrProxy/0.1")
 	resp, err := a.Client.Do(req)
 	if err != nil {
@@ -116,7 +123,10 @@ func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	checkBody, _ := io.ReadAll(resp.Body)
+	checkBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
 	checkStr := strings.ToLower(string(checkBody))
 
 	// Check for meta refresh to login (indicates not logged in)
@@ -125,7 +135,7 @@ func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	}
 
 	// Check for logout link (indicates logged in)
-	if doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(checkBody))); err == nil {
+	if doc, err := goquery.NewDocumentFromReader(strings.NewReader(checkStr)); err == nil {
 		foundLogout := false
 		doc.Find("a").EachWithBreak(func(i int, s *goquery.Selection) bool {
 			if href, ok := s.Attr("href"); ok {

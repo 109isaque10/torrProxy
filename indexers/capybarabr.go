@@ -171,10 +171,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 }
 
 func init() {
-	base := os.Getenv("CAPYBARA_BASE")
-	if base == "" {
-		base = "https://capybarabr.com/"
-	}
+	base := defaultEnv("CAPYBARA_BASE", "https://capybarabr.com/")
 	apiKey := os.Getenv("CAPYBARA_APIKEY")
 	idx := &CapybaraBRAPIIndexer{
 		BaseURL: base,

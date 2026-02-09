@@ -77,7 +77,7 @@ func ParseDateWithFormats(s string, layouts []string) time.Time {
 }
 
 func buildTorrProxyDownloadLink(indexerID, dlURL string) string {
-	u, err := url.Parse("http://localhost:8090")
+	u, err := url.Parse(defaultEnv("EXTERNAL_URL", "http://127.0.0.1:8090"))
 	if err != nil {
 		zap.L().Error("Error on Parse Neturl", zap.Error(err))
 		return ""
@@ -89,13 +89,6 @@ func buildTorrProxyDownloadLink(indexerID, dlURL string) string {
 	q.Set("dl_url", dlURL)
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func defaultEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }
 
 func cleanTitle(title, year, quality, language string) string {
@@ -150,4 +143,11 @@ func toInt(v interface{}) int {
 		}
 	}
 	return 0
+}
+
+func defaultEnv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

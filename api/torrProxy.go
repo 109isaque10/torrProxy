@@ -41,7 +41,7 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	case *indexers.AmigosShareIndexer:
 		v.EnsureClient()
 		if err := v.EnsureLogin(ctx); err != nil {
-			http.Error(w, "amigosshare login failed: "+err.Error(), http.StatusUnauthorized)
+			http.Error(w, "AmigosShare login failed: "+err.Error(), http.StatusUnauthorized)
 			return
 		}
 		if v.Client != nil {

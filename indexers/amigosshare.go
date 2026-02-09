@@ -60,6 +60,10 @@ func (a *AmigosShareIndexer) EnsureClient() {
 }
 
 func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
+	// Check if already logged in before attempting login
+	if logged, _ := a.isLoggedIn(ctx); logged {
+		return nil
+	}
 	return a.login(ctx)
 }
 
@@ -88,6 +92,59 @@ func (a *AmigosShareIndexer) resolveAction(action string) string {
 		return action
 	}
 	return base.ResolveReference(rel).String()
+}
+
+// isLoggedIn checks if the user is currently logged in by checking for logout link
+func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
+	if a.Username == "" || a.Password == "" {
+		return true, nil // No credentials, consider as "logged in" (no auth needed)
+	}
+	a.EnsureClient()
+
+	// Check a protected page (torrents-search.php)
+	checkURL, err := neturl.Parse(a.BaseURL)
+	if err != nil {
+		return false, err
+	}
+	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
+	req.Header.Set("User-Agent", "torrProxy/0.1")
+	resp, err := a.Client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	checkBody, _ := io.ReadAll(resp.Body)
+	checkStr := strings.ToLower(string(checkBody))
+
+	// Check for meta refresh to login (indicates not logged in)
+	if strings.Contains(checkStr, "account-login.php") && strings.Contains(checkStr, "refresh") {
+		return false, nil
+	}
+
+	// Check for logout link (indicates logged in)
+	if doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(checkBody))); err == nil {
+		foundLogout := false
+		doc.Find("a").EachWithBreak(func(i int, s *goquery.Selection) bool {
+			if href, ok := s.Attr("href"); ok {
+				if strings.Contains(href, "account-logout.php") {
+					foundLogout = true
+					return false
+				}
+			}
+			t := strings.ToLower(strings.TrimSpace(s.Text()))
+			if strings.Contains(t, "logout") || strings.Contains(t, "sair") {
+				foundLogout = true
+				return false
+			}
+			return true
+		})
+		return foundLogout, nil
+	}
+
+	return false, nil
 }
 
 // login posts the login form and verifies login.

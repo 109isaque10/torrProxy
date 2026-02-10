@@ -59,17 +59,17 @@ func (a *AmigosShareIndexer) EnsureClient() {
 	}
 }
 
-func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
-	// Check if already logged in before attempting login
-	if logged, err := a.isLoggedIn(ctx); err != nil {
-		// If we can't check login status, proceed with login attempt
-		// (could be transient network issue)
-		return a.login(ctx)
-	} else if logged {
-		return nil
-	}
-	return a.login(ctx)
-}
+//func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
+//	// Check if already logged in before attempting login
+//	if logged, err := a.isLoggedIn(ctx); err != nil {
+//		// If we can't check login status, proceed with login attempt
+//		// (could be transient network issue)
+//		return a.login(ctx)
+//	} else if logged {
+//		return nil
+//	}
+//	return a.login(ctx)
+//}
 
 func (a *AmigosShareIndexer) GetClient() *http.Client {
 	return a.Client
@@ -158,7 +158,7 @@ func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 }
 
 // login posts the login form and verifies login.
-func (a *AmigosShareIndexer) login(ctx context.Context) error {
+func (a *AmigosShareIndexer) login() error {
 	if a.Username == "" || a.Password == "" {
 		return nil
 	}
@@ -166,7 +166,7 @@ func (a *AmigosShareIndexer) login(ctx context.Context) error {
 
 	// 1) GET login page to collect cookies and hidden inputs
 	loginURL := a.resolveAction("account-login.php")
-	reqGet, _ := http.NewRequestWithContext(ctx, http.MethodGet, loginURL, nil)
+	reqGet, _ := http.NewRequest(http.MethodGet, loginURL, nil)
 	reqGet.Header.Set("User-Agent", "jackett-lite/0.1")
 	respGet, err := a.Client.Do(reqGet)
 	if err != nil {
@@ -194,7 +194,7 @@ func (a *AmigosShareIndexer) login(ctx context.Context) error {
 	formValues.Set("autologout", "yes")
 
 	// POST login
-	reqPost, _ := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
+	reqPost, _ := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
 	reqPost.Header.Set("User-Agent", "torrProxy/0.1")
 	reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	reqPost.Header.Set("Referer", loginURL)
@@ -222,7 +222,7 @@ func (a *AmigosShareIndexer) login(ctx context.Context) error {
 	checkURL, _ := neturl.Parse(a.BaseURL)
 	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
 
-	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
+	req2, _ := http.NewRequest(http.MethodGet, checkURL.String(), nil)
 	req2.Header.Set("User-Agent", "torrProxy/0.1")
 	resp2, err := a.Client.Do(req2)
 	if err != nil {
@@ -289,11 +289,6 @@ func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
 
 func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
 	a.EnsureClient()
-	// login if credentials provided
-	if err := a.login(ctx); err != nil {
-		// return the login error so the caller knows (and can inspect/adjust creds)
-		return nil, err
-	}
 
 	url, err := a.buildSearchURL(query)
 	if err != nil {
@@ -392,6 +387,10 @@ func init() {
 	}
 	// ensure we have client with cookiejar
 	idx.Client = newAmigosClient()
+	err := idx.login()
+	if err != nil {
+		return
+	}
 
 	types.Indexers = append(types.Indexers, idx)
 }

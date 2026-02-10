@@ -35,7 +35,7 @@ type AmigosShareIndexer struct {
 	Freeleech bool
 	Sort      string
 	Order     string
-// ADD THESE FIELDS for login state caching
+
 	mu              sync.RWMutex
 	lastLoginCheck  time.Time
 	loginCheckValid time.Duration // How long to trust the login state
@@ -50,21 +50,24 @@ func (a *AmigosShareIndexer) Id() string {
 	return "amigosshare"
 }
 
+func newAmigosClient() *http.Client {
+	jar, _ := cookiejar.New(nil)
+	return &http.Client{
+		Jar:     jar,
+		Timeout: 20 * time.Second,
+	}
+}
+
 func (a *AmigosShareIndexer) EnsureClient() {
 	if a.Client == nil {
-		jar, _ := cookiejar.New(nil)
-		a.Client = &http.Client{
-			Jar:     jar,
-			Timeout: 60 * time.Second,
-		}
+		a.Client = newAmigosClient()
 	}
-	// Initialize login check validity period (10 minutes default)
+	// Initialize login check validity period (5 minutes default)
 	if a.loginCheckValid == 0 {
 		a.loginCheckValid = 10 * time.Minute
 	}
 }
 
-// EnsureLogin checks if we are logged in (with caching) and logs in if needed
 func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 	if a.Username == "" || a.Password == "" {
 		return nil
@@ -113,11 +116,40 @@ func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 	return nil
 }
 
+func (a *AmigosShareIndexer) GetClient() *http.Client {
+	return a.Client
+}
+
+func (a *AmigosShareIndexer) GetBaseURL() string {
+	return a.BaseURL
+}
+
+// helper: resolve possibly relative action against BaseURL
+func (a *AmigosShareIndexer) resolveAction(action string) string {
+	if action == "" {
+		return a.BaseURL
+	}
+	if strings.HasPrefix(action, "http://") || strings.HasPrefix(action, "https://") {
+		return action
+	}
+	base, err := neturl.Parse(a.BaseURL)
+	if err != nil {
+		return action
+	}
+	rel, err := neturl.Parse(action)
+	if err != nil {
+		return action
+	}
+	return base.ResolveReference(rel).String()
+}
+
 // isLoggedIn checks if the user is currently logged in by checking for logout link
 func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	if a.Username == "" || a.Password == "" {
-		return true, nil
+		return true, nil // No credentials, consider as "logged in" (no auth needed)
 	}
+	a.EnsureClient()
+
 	a.EnsureClient()
 
 	checkURL, err := neturl.Parse(a.BaseURL)

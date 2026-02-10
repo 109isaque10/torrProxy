@@ -35,6 +35,11 @@ type AmigosShareIndexer struct {
 	Freeleech bool
 	Sort      string
 	Order     string
+// ADD THESE FIELDS for login state caching
+	mu              sync.RWMutex
+	lastLoginCheck  time.Time
+	loginCheckValid time.Duration // How long to trust the login state
+	isCurrentlyLoggedIn bool
 }
 
 func (a *AmigosShareIndexer) Name() string {
@@ -45,67 +50,76 @@ func (a *AmigosShareIndexer) Id() string {
 	return "amigosshare"
 }
 
-func newAmigosClient() *http.Client {
-	jar, _ := cookiejar.New(nil)
-	return &http.Client{
-		Jar:     jar,
-		Timeout: 20 * time.Second,
-	}
-}
-
 func (a *AmigosShareIndexer) EnsureClient() {
 	if a.Client == nil {
-		a.Client = newAmigosClient()
+		jar, _ := cookiejar.New(nil)
+		a.Client = &http.Client{
+			Jar:     jar,
+			Timeout: 60 * time.Second,
+		}
+	}
+	// Initialize login check validity period (10 minutes default)
+	if a.loginCheckValid == 0 {
+		a.loginCheckValid = 10 * time.Minute
 	}
 }
 
+// EnsureLogin checks if we are logged in (with caching) and logs in if needed
 func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
-	// Check if already logged in before attempting login
-	if logged, err := a.isLoggedIn(ctx); err != nil {
-		// If we can't check login status, proceed with login attempt
-		// (could be transient network issue)
-		return a.login(ctx)
-	} else if logged {
+	if a.Username == "" || a.Password == "" {
 		return nil
 	}
-	return a.login(ctx)
-}
-
-func (a *AmigosShareIndexer) GetClient() *http.Client {
-	return a.Client
-}
-
-func (a *AmigosShareIndexer) GetBaseURL() string {
-	return a.BaseURL
-}
-
-// helper: resolve possibly relative action against BaseURL
-func (a *AmigosShareIndexer) resolveAction(action string) string {
-	if action == "" {
-		return a.BaseURL
+	
+	a.EnsureClient()
+	
+	// Check cached login state first
+	a.mu.RLock()
+	if a.isCurrentlyLoggedIn && time.Since(a.lastLoginCheck) < a.loginCheckValid {
+		a.mu.RUnlock()
+		return nil // Still logged in based on cache
 	}
-	if strings.HasPrefix(action, "http://") || strings.HasPrefix(action, "https://") {
-		return action
-	}
-	base, err := neturl.Parse(a.BaseURL)
+	a.mu.RUnlock()
+	
+	// Need to verify login status
+	loggedIn, err := a.isLoggedIn(ctx)
 	if err != nil {
-		return action
+		return err
 	}
-	rel, err := neturl.Parse(action)
-	if err != nil {
-		return action
+	
+	if loggedIn {
+		// Update cache
+		a.mu.Lock()
+		a.isCurrentlyLoggedIn = true
+		a.lastLoginCheck = time.Now()
+		a.mu.Unlock()
+		return nil
 	}
-	return base.ResolveReference(rel).String()
+	
+	// Not logged in, attempt login
+	if err := a.login(ctx); err != nil {
+		// Clear cache on login failure
+		a.mu.Lock()
+		a.isCurrentlyLoggedIn = false
+		a.mu.Unlock()
+		return err
+	}
+	
+	// Update cache after successful login
+	a.mu.Lock()
+	a.isCurrentlyLoggedIn = true
+	a.lastLoginCheck = time.Now()
+	a.mu.Unlock()
+	
+	return nil
 }
 
 // isLoggedIn checks if the user is currently logged in by checking for logout link
 func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	if a.Username == "" || a.Password == "" {
-		return true, nil // No credentials, consider as "logged in" (no auth needed)
+		return true, nil
 	}
 	a.EnsureClient()
 
-	// Check a protected page (torrents-search.php)
 	checkURL, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return false, err
@@ -127,34 +141,16 @@ func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	checkStr := strings.ToLower(string(checkBody))
 
-	// Check for meta refresh to login (indicates not logged in)
-	if strings.Contains(checkStr, "account-login.php") && strings.Contains(checkStr, "refresh") {
-		return false, nil
-	}
+	bodyStr := string(checkBody)
+	// If we see logout link or no login form, we're logged in
+	hasLogout := strings.Contains(bodyStr, "account-logout.php") || 
+	             strings.Contains(bodyStr, "logout") || 
+	             strings.Contains(bodyStr, "Sair")
+	hasLoginForm := strings.Contains(bodyStr, "account-login.php")
 
-	// Check for logout link (indicates logged in)
-	if doc, err := goquery.NewDocumentFromReader(strings.NewReader(checkStr)); err == nil {
-		foundLogout := false
-		doc.Find("a").EachWithBreak(func(i int, s *goquery.Selection) bool {
-			if href, ok := s.Attr("href"); ok {
-				if strings.Contains(href, "account-logout.php") {
-					foundLogout = true
-					return false
-				}
-			}
-			t := strings.ToLower(strings.TrimSpace(s.Text()))
-			if strings.Contains(t, "logout") || strings.Contains(t, "sair") {
-				foundLogout = true
-				return false
-			}
-			return true
-		})
-		return foundLogout, nil
-	}
-
-	return false, nil
+	// Logged in if we have logout link and no login form
+	return hasLogout && !hasLoginForm, nil
 }
 
 // login posts the login form and verifies login.

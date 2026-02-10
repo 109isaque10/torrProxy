@@ -145,45 +145,45 @@ func (a *AmigosShareIndexer) resolveAction(action string) string {
 }
 
 // isLoggedIn checks if the user is currently logged in by checking for logout link
-func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
-	if a.Username == "" || a.Password == "" {
-		return true, nil // No credentials, consider as "logged in" (no auth needed)
-	}
-	a.EnsureClient()
-
-	a.EnsureClient()
-
-	checkURL, err := neturl.Parse(a.BaseURL)
-	if err != nil {
-		return false, err
-	}
-	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("User-Agent", "torrProxy/0.1")
-	resp, err := a.Client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-
-	checkBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, err
-	}
-
-	bodyStr := string(checkBody)
-	// If we see logout link or no login form, we're logged in
-	hasLogout := strings.Contains(bodyStr, "account-logout.php") || 
-	             strings.Contains(bodyStr, "logout") || 
-	             strings.Contains(bodyStr, "Sair")
-	hasLoginForm := strings.Contains(bodyStr, "account-login.php")
-
-	// Logged in if we have logout link and no login form
-	return hasLogout && !hasLoginForm, nil
+//func (a *AmigosShareIndexer) isLoggedIn(ctx context.Context) (bool, error) {
+//	if a.Username == "" || a.Password == "" {
+//		return true, nil // No credentials, consider as "logged in" (no auth needed)
+//	}
+//	a.EnsureClient()
+//
+//	a.EnsureClient()
+//
+//	checkURL, err := neturl.Parse(a.BaseURL)
+//	if err != nil {
+//		return false, err
+//	}
+//	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
+//
+//	req, err := http.NewRequestWithContext(ctx, http.MethodGet, checkURL.String(), nil)
+//	if err != nil {
+//		return false, err
+//	}
+//	req.Header.Set("User-Agent", "torrProxy/0.1")
+//	resp, err := a.Client.Do(req)
+//	if err != nil {
+//		return false, err
+//	}
+//	defer resp.Body.Close()
+//
+//	checkBody, err := io.ReadAll(resp.Body)
+//	if err != nil {
+//		return false, err
+//	}
+//
+//	bodyStr := string(checkBody)
+//	// If we see logout link or no login form, we're logged in
+//	hasLogout := strings.Contains(bodyStr, "account-logout.php") ||
+//	             strings.Contains(bodyStr, "logout") ||
+//	             strings.Contains(bodyStr, "Sair")
+//	hasLoginForm := strings.Contains(bodyStr, "account-login.php")
+//
+//	// Logged in if we have logout link and no login form
+//	return hasLogout && !hasLoginForm, nil
 }
 
 // login posts the login form and verifies login.

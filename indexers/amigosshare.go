@@ -19,6 +19,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"torrProxy/types"
 

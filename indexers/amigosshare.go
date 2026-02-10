@@ -37,9 +37,9 @@ type AmigosShareIndexer struct {
 	Sort      string
 	Order     string
 
-	mu              sync.RWMutex
-	lastLoginCheck  time.Time
-	loginCheckValid time.Duration // How long to trust the login state
+	mu                  sync.RWMutex
+	lastLoginCheck      time.Time
+	loginCheckValid     time.Duration // How long to trust the login state
 	isCurrentlyLoggedIn bool
 }
 
@@ -73,9 +73,9 @@ func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 	if a.Username == "" || a.Password == "" {
 		return nil
 	}
-	
+
 	a.EnsureClient()
-	
+
 	// Check cached login state first
 	a.mu.RLock()
 	if a.isCurrentlyLoggedIn && time.Since(a.lastLoginCheck) < a.loginCheckValid {
@@ -83,13 +83,13 @@ func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 		return nil // Still logged in based on cache
 	}
 	a.mu.RUnlock()
-	
+
 	// Need to verify login status
 	loggedIn, err := a.isLoggedIn(ctx)
 	if err != nil {
 		return err
 	}
-	
+
 	if loggedIn {
 		// Update cache
 		a.mu.Lock()
@@ -98,7 +98,7 @@ func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 		a.mu.Unlock()
 		return nil
 	}
-	
+
 	// Not logged in, attempt login
 	if err := a.login(ctx); err != nil {
 		// Clear cache on login failure
@@ -107,13 +107,13 @@ func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
 		a.mu.Unlock()
 		return err
 	}
-	
+
 	// Update cache after successful login
 	a.mu.Lock()
 	a.isCurrentlyLoggedIn = true
 	a.lastLoginCheck = time.Now()
 	a.mu.Unlock()
-	
+
 	return nil
 }
 
@@ -184,7 +184,7 @@ func (a *AmigosShareIndexer) resolveAction(action string) string {
 //
 //	// Logged in if we have logout link and no login form
 //	return hasLogout && !hasLoginForm, nil
-}
+//}
 
 // login posts the login form and verifies login.
 func (a *AmigosShareIndexer) login() error {

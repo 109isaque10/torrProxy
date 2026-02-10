@@ -69,53 +69,53 @@ func (a *AmigosShareIndexer) EnsureClient() {
 	}
 }
 
-func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
-	if a.Username == "" || a.Password == "" {
-		return nil
-	}
-
-	a.EnsureClient()
-
-	// Check cached login state first
-	a.mu.RLock()
-	if a.isCurrentlyLoggedIn && time.Since(a.lastLoginCheck) < a.loginCheckValid {
-		a.mu.RUnlock()
-		return nil // Still logged in based on cache
-	}
-	a.mu.RUnlock()
-
-	// Need to verify login status
-	loggedIn, err := a.isLoggedIn(ctx)
-	if err != nil {
-		return err
-	}
-
-	if loggedIn {
-		// Update cache
-		a.mu.Lock()
-		a.isCurrentlyLoggedIn = true
-		a.lastLoginCheck = time.Now()
-		a.mu.Unlock()
-		return nil
-	}
-
-	// Not logged in, attempt login
-	if err := a.login(ctx); err != nil {
-		// Clear cache on login failure
-		a.mu.Lock()
-		a.isCurrentlyLoggedIn = false
-		a.mu.Unlock()
-		return err
-	}
-
-	// Update cache after successful login
-	a.mu.Lock()
-	a.isCurrentlyLoggedIn = true
-	a.lastLoginCheck = time.Now()
-	a.mu.Unlock()
-
-	return nil
-}
+//func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
+//	if a.Username == "" || a.Password == "" {
+//		return nil
+//	}
+//
+//	a.EnsureClient()
+//
+//	// Check cached login state first
+//	a.mu.RLock()
+//	if a.isCurrentlyLoggedIn && time.Since(a.lastLoginCheck) < a.loginCheckValid {
+//		a.mu.RUnlock()
+//		return nil // Still logged in based on cache
+//	}
+//	a.mu.RUnlock()
+//
+//	// Need to verify login status
+//	loggedIn, err := a.isLoggedIn(ctx)
+//	if err != nil {
+//		return err
+//	}
+//
+//	if loggedIn {
+//		// Update cache
+//		a.mu.Lock()
+//		a.isCurrentlyLoggedIn = true
+//		a.lastLoginCheck = time.Now()
+//		a.mu.Unlock()
+//		return nil
+//	}
+//
+//	// Not logged in, attempt login
+//	if err := a.login(ctx); err != nil {
+//		// Clear cache on login failure
+//		a.mu.Lock()
+//		a.isCurrentlyLoggedIn = false
+//		a.mu.Unlock()
+//		return err
+//	}
+//
+//	// Update cache after successful login
+//	a.mu.Lock()
+//	a.isCurrentlyLoggedIn = true
+//	a.lastLoginCheck = time.Now()
+//	a.mu.Unlock()
+//
+//	return nil
+//}
 
 func (a *AmigosShareIndexer) GetClient() *http.Client {
 	return a.Client

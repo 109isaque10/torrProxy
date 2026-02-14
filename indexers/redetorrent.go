@@ -7,18 +7,23 @@ package indexers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	neturl "net/url"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 	"torrProxy/types"
 
+	"github.com/PuerkitoBio/goquery"
 	"github.com/coregx/coregex"
 )
+
+var infoHashRe = coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+var magnetDnRe = coregex.MustCompile(`dn=([^&]+)`)
+var seasonRe = coregex.MustCompile(`(?i)(S0)(\d{1,2})$`)
 
 type RedeTorrent struct {
 	BaseURL string
@@ -45,7 +50,7 @@ func (r *RedeTorrent) buildURL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	u.Path = path.Join(u.Path, "indexers/rede_torrent")
+	u.Path = path.Join(u.Path, "index.php")
 	return u.String(), nil
 }
 
@@ -54,10 +59,7 @@ func (r *RedeTorrent) keywordPreprocess(q string) string {
 	s := strings.ToLower(q)
 	s = strings.ReplaceAll(s, " complet", "")
 	// S0(\d{1,2})$ -> temporada $2
-	re1 := coregex.MustCompile(`(?i)(S0)(\d{1,2})$`)
-	s = re1.ReplaceAllString(s, "temporada $2")
-	re2 := coregex.MustCompile(`(?i)(S)(\d{1,3})$`)
-	s = re2.ReplaceAllString(s, "temporada $2")
+	s = seasonRe.ReplaceAllString(s, "$2ª temporada")
 	return s
 }
 
@@ -69,8 +71,7 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 	u, _ := neturl.Parse(url)
 
 	qp := u.Query()
-	qp.Set("q", r.keywordPreprocess(query))
-	qp.Set("filter_results", "true")
+	qp.Set("s", r.keywordPreprocess(query))
 	u.RawQuery = qp.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -89,72 +90,169 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 		return nil, fmt.Errorf("redetorrent: bad response %d", resp.StatusCode)
 	}
 
-	var payload map[string]interface{}
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&payload); err != nil {
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
-	resultsRaw := payload["results"]
-	if resultsRaw == nil {
-		resultsRaw = payload["data"]
+	query = r.FormatQuery(query)
+	// Extract links from search results (.capa_lista elements)
+	var links []string
+	doc.Find(".capa_lista a").Each(func(i int, s *goquery.Selection) {
+		if title, exists := s.Attr("title"); exists {
+			if !strings.Contains(strings.ToLower(title), query) {
+				return
+			}
+		}
+		if href, exists := s.Attr("href"); exists {
+			links = append(links, href)
+		}
+	})
+
+	// Now scrape each detail page
+	resultsCh := make(chan []types.Result)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 5) // limit concurrency
+
+	seen := make(map[string]struct{})
+	for _, link := range links {
+		wg.Add(1)
+		go func(link string) {
+			defer wg.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			item, err := r.scrapeDetailPage(ctx, link, seen)
+			resultsCh <- item
+			if err != nil {
+				return
+			}
+		}(link)
 	}
 
-	resultsSlice, ok := resultsRaw.([]interface{})
-	if !ok {
-		return nil, fmt.Errorf("redetorrent: unexpected results format")
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var results []types.Result
+	for item := range resultsCh {
+		results = append(results, item...)
 	}
 
-	out := make([]types.Result, 0, len(resultsSlice))
-	for _, ri := range resultsSlice {
-		item, _ := ri.(map[string]interface{})
-		if item == nil {
+	return results, nil
+}
+
+func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map[string]struct{}) ([]types.Result, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "torrProxy/1.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("redetorrent: bad response %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract magnet links - look for all <a href="magnet:...">
+	var magnets []string
+	doc.Find("a[href^='magnet:']").Each(func(i int, s *goquery.Selection) {
+		href, exists := s.Attr("href")
+		if exists {
+			magnets = append(magnets, href)
+		}
+	})
+
+	var size string
+	var originalTitle string
+	var date string
+	doc.Find("div#informacoes > p").Each(func(i int, s *goquery.Selection) {
+		for line := range strings.Lines(s.Text()) {
+			line = strings.TrimSpace(line)
+
+			if strings.Contains(line, "Tamanho:") {
+				size := strings.TrimSuffix(strings.TrimPrefix(line, "Tamanho: "), " GB")
+				if size == "Desconhecido" {
+					size = "0"
+				} else {
+					size += " GB"
+				}
+				continue
+			}
+			if strings.Contains(line, "Título Original:") {
+				originalTitle = strings.TrimPrefix(line, "Título Original: ")
+				continue
+			}
+		}
+	})
+
+	doc.Find(".data_post a time").Each(func(i int, s *goquery.Selection) {
+		if dateAttr, exists := s.Attr("datetime"); exists {
+			date = dateAttr
+		}
+	})
+
+	pub := ParseDateWithFormats(date, []string{time.RFC3339, "2006-01-02T15:04:05.000000Z", "2006-01-02 15:04:05", "02/01/2006 15:04:05"})
+
+	// Build results
+	var results []types.Result
+	for _, magnet := range magnets {
+		infoHash := ExtractInfoHash(magnet)
+		if _, exists := seen[infoHash]; exists {
 			continue
 		}
-		magnet := types.ToString(item["magnet_link"])
-		if magnet == "" {
-			magnet = types.ToString(item["magnet"])
-		}
-		title := strings.TrimSpace(types.ToString(item["title"]))
-		if title == "" {
-			title = strings.TrimSpace(types.ToString(item["original_title"]))
-		}
-		infohash := types.ToString(item["info_hash"])
-		date := types.ToString(item["date"])
-		size := types.ToString(item["size"])
-		seeders := 0
-		if s := item["seed_count"]; s != nil {
-			s = toInt(s)
-		}
-		leechers := 0
-		if l := item["leech_count"]; l != nil {
-			l = toInt(l)
+		seen[infoHash] = struct{}{}
+		var title string
+		matches := magnetDnRe.FindStringSubmatch(magnet)
+		if len(matches) > 1 {
+			title, _ = neturl.QueryUnescape(matches[1])
 		}
 
-		pub := ParseDateWithFormats(date, []string{time.RFC3339, "2006-01-02T15:04:05.000000Z", "2006-01-02 15:04:05", "02/01/2006 15:04:05"})
-
-		res := types.Result{
+		results = append(results, types.Result{
 			Title:       title,
-			Link:        types.ToString(item["details"]),
-			Description: types.ToString(item["original_title"]),
+			Link:        url,
+			Description: originalTitle,
+			InfoHash:    infoHash,
 			Size:        size,
 			PubDate:     pub,
-			Seeders:     seeders,
-			Leechers:    leechers,
-			InfoHash:    infohash,
 			TorrentURL:  magnet,
-		}
-
-		out = append(out, res)
+		})
 	}
 
-	return out, nil
+	return results, nil
+}
+
+func ExtractInfoHash(magnet string) string {
+	// magnet:?xt=urn:btih:INFOHASH&dn=...
+	matches := infoHashRe.FindStringSubmatch(magnet)
+	if len(matches) > 1 {
+		return strings.ToLower(matches[1])
+	}
+	return ""
+}
+
+func (r *RedeTorrent) FormatQuery(q string) string {
+	// For TV shows, convert "S01E02" to "S0X02" to match site format
+	q = strings.ToLower(q)
+	q = strings.ReplaceAll(q, " complet", "")
+	q = seasonRe.ReplaceAllString(q, "")
+	return q
 }
 
 func init() {
 	base := os.Getenv("REDE_TORRENT_BASE")
 	if base == "" {
-		base = "http://127.0.0.1:4949"
+		base = "https://redetorrent.com"
 	}
 	idx := &RedeTorrent{
 		BaseURL: base,

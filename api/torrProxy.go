@@ -68,44 +68,30 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fetch the torrent file and stream back using the indexer's client (so cookies preserved)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	req.Header.Set("User-Agent", "torrProxy/0.1")
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "failed to fetch details page: "+err.Error(), http.StatusBadGateway)
+		http.Error(w, "failed to download torrent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		http.Error(w, fmt.Sprintf("details page returned %d: %s", resp.StatusCode, string(body)), http.StatusBadGateway)
-		return
-	}
-
-	// Fetch the torrent file and stream back using the indexer's client (so cookies preserved)
-	req2, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
-	req2.Header.Set("User-Agent", "torrProxy/0.1")
-	resp2, err := client.Do(req2)
-	if err != nil {
-		http.Error(w, "failed to download torrent: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp2.Body)
-		http.Error(w, fmt.Sprintf("torrent download returned %d: %s", resp2.StatusCode, string(b)), http.StatusBadGateway)
+		b, _ := io.ReadAll(resp.Body)
+		http.Error(w, fmt.Sprintf("torrent download returned %d: %s", resp.StatusCode, string(b)), http.StatusBadGateway)
 		return
 	}
 
 	// Copy Content-Type (default to application/x-bittorrent)
-	if ct := resp2.Header.Get("Content-Type"); ct != "" {
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	} else {
 		w.Header().Set("Content-Type", "application/x-bittorrent")
 	}
-	if cd := resp2.Header.Get("Content-Disposition"); cd != "" {
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		w.Header().Set("Content-Disposition", cd)
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, resp2.Body)
+	_, _ = io.Copy(w, resp.Body)
 }

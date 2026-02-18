@@ -17,3 +17,10 @@ torrProxy
 
 # Dependency directories
 vendor/
+log
+main
+.idea/vcs.xml
+.idea/modules.xml
+.idea/torrProxy.iml
+.idea/go.imports.xml
+.idea/.gitignore

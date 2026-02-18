@@ -109,40 +109,43 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 		}
 	})
 
-	// Now scrape each detail page
-	resultsCh := make(chan []types.Result)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5) // limit concurrency
+	// // Now scrape each detail page
+	// resultsCh := make(chan []types.Result)
+	// var wg sync.WaitGroup
+	// semaphore := make(chan struct{}, 5) // limit concurrency
 
-	seen := make(map[string]struct{})
-	for _, link := range links {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-			item, err := r.scrapeDetailPage(ctx, link, seen)
-			resultsCh <- item
-			if err != nil {
-				return
-			}
-		}(link)
-	}
+	// seen := make(map[string]struct{})
+	// for _, link := range links {
+	// 	wg.Add(1)
+	// 	go func(link string) {
+	// 		defer wg.Done()
+	// 		semaphore <- struct{}{}
+	// 		defer func() { <-semaphore }()
+	// 		item, err := r.scrapeDetailPage(ctx, link, seen)
+	// 		resultsCh <- item
+	// 		if err != nil {
+	// 			return
+	// 		}
+	// 	}(link)
+	// }
 
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+	// go func() {
+	// 	wg.Wait()
+	// 	close(resultsCh)
+	// }()
 
-	var results []types.Result
-	for item := range resultsCh {
-		results = append(results, item...)
-	}
+	// var results []types.Result
+	// for item := range resultsCh {
+	// 	results = append(results, item...)
+	// }
+
+	// Enqueue and process links with a queued semaphore
+	results := r.processLinksWithQueue(ctx, links)
 
 	return results, nil
 }
 
-func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map[string]struct{}) ([]types.Result, error) {
+func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map[string]struct{}, mu *sync.Mutex) ([]types.Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -208,10 +211,13 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 	var results []types.Result
 	for _, magnet := range magnets {
 		infoHash := ExtractInfoHash(magnet)
+		mu.Lock()
 		if _, exists := seen[infoHash]; exists {
+			mu.Unlock()
 			continue
 		}
 		seen[infoHash] = struct{}{}
+		mu.Unlock()
 		var title string
 		matches := magnetDnRe.FindStringSubmatch(magnet)
 		if len(matches) > 1 {
@@ -258,4 +264,48 @@ func init() {
 		BaseURL: base,
 	}
 	types.Indexers = append(types.Indexers, idx)
+}
+
+func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string) []types.Result {
+	resultsCh := make(chan []types.Result)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 5)       // Limit concurrency - 5 simultaneous requests
+	queue := make(chan string, len(links)+10) // Add queue for waiting requests
+
+	// Enqueue all links
+	go func() {
+		for _, link := range links {
+			queue <- link
+		}
+		close(queue) // Mark the queue as complete
+	}()
+
+	var mu sync.Mutex
+	seen := make(map[string]struct{})
+	for link := range queue {
+		wg.Add(1)
+		go func(link string) {
+			defer wg.Done()
+			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
+			defer func() { <-semaphore }() // Signal the semaphore is free
+
+			item, err := r.scrapeDetailPage(ctx, link, seen, &mu)
+			if err == nil {
+				resultsCh <- item
+			}
+		}(link)
+	}
+
+	// Close results channel once all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Collect results
+	var results []types.Result
+	for item := range resultsCh {
+		results = append(results, item...)
+	}
+	return results
 }

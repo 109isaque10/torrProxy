@@ -399,7 +399,7 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.
 	})
 	
 	if len(out) == 0 && strings.Contains(query, "complet"){
-		out, err = Search(ctx, strings.ReplaceAll(query, " complet", ""))
+		out, err = a.Search(ctx, strings.ReplaceAll(query, " complet", ""))
 		if (err!=nil){
 			return nil, err
 		}

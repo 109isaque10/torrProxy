@@ -35,24 +35,20 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve details URL and choose client (use indexer's logged-in client when possible)
 	client := http.DefaultClient
-	baseURL := ""
 	switch v := idx.(type) {
 	case *indexers.AmigosShareIndexer:
 		v.EnsureClient()
 		if v.Client != nil {
 			client = v.Client
 		}
-		baseURL = v.BaseURL
 	case *indexers.RedeTorrent:
 		if v.Client != nil {
 			client = v.Client
 		}
-		baseURL = v.BaseURL
 	case *indexers.CapybaraBRAPIIndexer:
 		if v.Client != nil {
 			client = v.Client
 		}
-		baseURL = v.BaseURL
 	default:
 		// fallback to default
 	}

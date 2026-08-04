@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	neturl "net/url"
 	"time"
 	"torrProxy/indexers"
 	"torrProxy/types"
@@ -58,19 +57,9 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		// fallback to default
 	}
 
-	// Ensure detailsURL absolute if possible
-	u, err := neturl.Parse(dlURL)
-	if err != nil || !u.IsAbs() {
-		if baseURL != "" {
-			if base, err := neturl.Parse(baseURL); err == nil {
-				dlURL = base.ResolveReference(u).String()
-			}
-		}
-	}
-
 	// Fetch the torrent file and stream back using the indexer's client (so cookies preserved)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
-	req.Header.Set("User-Agent", "torrProxy/0.1")
+	req.Header.Set("User-Agent", "torrProxy/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "failed to download torrent: "+err.Error(), http.StatusBadGateway)
@@ -92,6 +81,7 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		w.Header().Set("Content-Disposition", cd)
 	}
-	w.WriteHeader(http.StatusOK)
+
+	// w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, resp.Body)
 }

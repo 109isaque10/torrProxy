@@ -72,7 +72,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// comma-separated names
 		requested := map[string]bool{}
-		for _, nm := range strings.Split(indexerParam, ",") {
+		for nm := range strings.SplitSeq(indexerParam, ",") {
 			requested[strings.TrimSpace(nm)] = true
 		}
 		for _, idx := range types.Indexers {
@@ -104,6 +104,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				br.Error = err.Error()
 			}
+
 			select {
 			case ch <- br:
 			case <-ctx.Done():
@@ -142,6 +143,5 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
 	_ = enc.Encode(flat)
 }

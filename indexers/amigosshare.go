@@ -1,13 +1,5 @@
 package indexers
 
-// AmigosShareIndexer's improved login flow (updated to detect site-specific alerts
-// and meta-refresh redirects that indicated the login failed in your HTML dumps).
-//
-// Key changes:
-// - After POST, look for any `.alert` elements (not only `div.alert-error`) and return their text.
-// - After the check GET, treat meta-refresh back to account-login.php or the presence of the login form
-//   as "not logged in" and return a clear error.
-
 import (
 	"context"
 	"errors"
@@ -21,9 +13,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"torrProxy/caching"
 	"torrProxy/types"
 
-	"github.com/coregx/coregex"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/wasilibs/go-re2"
+	"go.uber.org/zap"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -41,6 +36,8 @@ type AmigosShareIndexer struct {
 	lastLoginCheck      time.Time
 	loginCheckValid     time.Duration // How long to trust the login state
 	isCurrentlyLoggedIn bool
+
+	cache *ttlcache.Cache[string, any]
 }
 
 func (a *AmigosShareIndexer) Name() string {
@@ -163,7 +160,7 @@ func (a *AmigosShareIndexer) resolveAction(action string) string {
 //	if err != nil {
 //		return false, err
 //	}
-//	req.Header.Set("User-Agent", "torrProxy/0.1")
+//	req.Header.Set("User-Agent", "torrProxy/1.0")
 //	resp, err := a.Client.Do(req)
 //	if err != nil {
 //		return false, err
@@ -196,7 +193,7 @@ func (a *AmigosShareIndexer) login() error {
 	// 1) GET login page to collect cookies and hidden inputs
 	loginURL := a.resolveAction("account-login.php")
 	reqGet, _ := http.NewRequest(http.MethodGet, loginURL, nil)
-	reqGet.Header.Set("User-Agent", "jackett-lite/0.1")
+	reqGet.Header.Set("User-Agent", "torrProxy/1.0")
 	respGet, err := a.Client.Do(reqGet)
 	if err != nil {
 		return fmt.Errorf("amigosshare: GET login page failed: %w", err)
@@ -224,7 +221,7 @@ func (a *AmigosShareIndexer) login() error {
 
 	// POST login
 	reqPost, _ := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
-	reqPost.Header.Set("User-Agent", "torrProxy/0.1")
+	reqPost.Header.Set("User-Agent", "torrProxy/1.0")
 	reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	reqPost.Header.Set("Referer", loginURL)
 
@@ -252,7 +249,7 @@ func (a *AmigosShareIndexer) login() error {
 	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
 
 	req2, _ := http.NewRequest(http.MethodGet, checkURL.String(), nil)
-	req2.Header.Set("User-Agent", "torrProxy/0.1")
+	req2.Header.Set("User-Agent", "torrProxy/1.0")
 	resp2, err := a.Client.Do(req2)
 	if err != nil {
 		return fmt.Errorf("GET check page failed: %w", err)
@@ -294,7 +291,7 @@ func (a *AmigosShareIndexer) login() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := coregex.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(query), "%") // spaces -> %
+	q := re2.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(query), "%") // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err
@@ -302,6 +299,7 @@ func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
 	u.Path = path.Join(u.Path, "torrents-search.php")
 	vals := neturl.Values{}
 	vals.Set("search", q)
+	vals.Set("tipo", "precisa")
 	if a.Sort != "" {
 		vals.Set("sort", a.Sort)
 	} else {
@@ -317,7 +315,23 @@ func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
 }
 
 func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
+	qLow := strings.ToLower(query)
+	if collectionRe.MatchString(qLow) {
+		query = collectionRe.ReplaceAllString(qLow, "coleção")
+	}
+
 	a.EnsureClient()
+
+	// Check cache first if cache is available
+	if a.cache != nil {
+		cacheKey := caching.GenerateCacheKey(a.Id(), query)
+		if cached := a.cache.Get(cacheKey); cached != nil {
+			if results, ok := cached.Value().([]types.Result); ok {
+				zap.L().Debug("📦 Cache hit for amigosshare search", zap.String("query", query))
+				return results, nil
+			}
+		}
+	}
 
 	url, err := a.buildSearchURL(query)
 	if err != nil {
@@ -397,12 +411,19 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.
 
 		out = append(out, res)
 	})
-	
-	if len(out) == 0 && strings.Contains(query, "complet"){
+
+	if len(out) == 0 && strings.Contains(query, "complet") {
 		out, err = a.Search(ctx, strings.ReplaceAll(query, " complet", ""))
-		if (err!=nil){
+		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Cache the results if cache is available
+	if a.cache != nil {
+		cacheKey := caching.GenerateCacheKey(a.Id(), query)
+		a.cache.Set(cacheKey, out, 2*time.Hour)
+		zap.L().Debug("💾 Cached amigosshare search results", zap.String("query", query), zap.String("key", cacheKey), zap.Duration("ttl", 2*time.Hour), zap.Int("count", len(out)))
 	}
 
 	return out, nil
@@ -420,6 +441,7 @@ func init() {
 		}(),
 		Sort:  defaultEnv("AMIGOS_SORT", "id"),
 		Order: defaultEnv("AMIGOS_ORDER", "desc"),
+		cache: caching.C().Cache,
 	}
 	// ensure we have client with cookiejar
 	idx.Client = newAmigosClient()

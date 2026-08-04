@@ -1,10 +1,5 @@
 package indexers
 
-// Converted & extended from torrent-yml
-// Config from environment:
-//  - REDE_TORRENT_BASE (default: http://192.168.1.179:4949)
-// This indexer calls /indexers/rede_torrent and expects JSON with results array.
-
 import (
 	"context"
 	"fmt"
@@ -15,19 +10,24 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"torrProxy/caching"
 	"torrProxy/types"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/coregx/coregex"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/wasilibs/go-re2"
+	"go.uber.org/zap"
 )
 
-var infoHashRe = coregex.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
-var magnetDnRe = coregex.MustCompile(`dn=([^&]+)`)
-var seasonRe = coregex.MustCompile(`(?i)(S0)(\d{1,2})$`)
+var infoHashRe = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+var magnetDnRe = re2.MustCompile(`dn=([^&]+)`)
+var seasonRe = re2.MustCompile(`s0?(\d{1,2})$`)
 
 type RedeTorrent struct {
 	BaseURL string
 	Client  *http.Client
+
+	cache *ttlcache.Cache[string, any]
 }
 
 func (r *RedeTorrent) Name() string {
@@ -58,12 +58,29 @@ func (r *RedeTorrent) buildURL() (string, error) {
 func (r *RedeTorrent) keywordPreprocess(q string) string {
 	s := strings.ToLower(q)
 	s = strings.ReplaceAll(s, " complet", "")
-	// S0(\d{1,2})$ -> temporada $2
-	s = seasonRe.ReplaceAllString(s, "$2ª temporada")
+	// s0(\d{1,2})$ -> temporada $1
+	s = seasonRe.ReplaceAllString(s, "${1}ª temporada")
 	return s
 }
 
 func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result, error) {
+	if collectionRe.MatchString(strings.ToLower(query)) {
+		return nil, fmt.Errorf("no need to search for collections")
+	}
+
+	query = r.keywordPreprocess(query)
+
+	// Check cache first if cache is available
+	if r.cache != nil {
+		cacheKey := caching.GenerateCacheKey(r.Id(), query)
+		if cached := r.cache.Get(cacheKey); cached != nil {
+			if results, ok := cached.Value().([]types.Result); ok {
+				zap.L().Debug("📦 Cache hit for redetorrent search", zap.String("query", query))
+				return results, nil
+			}
+		}
+	}
+
 	url, err := r.buildURL()
 	if err != nil {
 		return nil, err
@@ -71,7 +88,7 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 	u, _ := neturl.Parse(url)
 
 	qp := u.Query()
-	qp.Set("s", r.keywordPreprocess(query))
+	qp.Set("s", query)
 	u.RawQuery = qp.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -141,6 +158,13 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 
 	// Enqueue and process links with a queued semaphore
 	results := r.processLinksWithQueue(ctx, links)
+
+	// Cache the results if cache is available
+	if r.cache != nil {
+		cacheKey := caching.GenerateCacheKey(r.Id(), query)
+		r.cache.Set(cacheKey, results, 5*time.Hour)
+		zap.L().Debug("💾 Cached redetorrent search results", zap.String("query", query), zap.String("key", cacheKey), zap.Duration("ttl", 5*time.Hour), zap.Int("count", len(results)))
+	}
 
 	return results, nil
 }
@@ -262,6 +286,7 @@ func init() {
 	}
 	idx := &RedeTorrent{
 		BaseURL: base,
+		cache:   caching.C().Cache,
 	}
 	types.Indexers = append(types.Indexers, idx)
 }
@@ -269,20 +294,20 @@ func init() {
 func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string) []types.Result {
 	resultsCh := make(chan []types.Result)
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5)       // Limit concurrency - 5 simultaneous requests
-	queue := make(chan string, len(links)+10) // Add queue for waiting requests
+	semaphore := make(chan struct{}, 5) // Limit concurrency - 5 simultaneous requests
+	// queue := make(chan string, len(links)+10) // Add queue for waiting requests
 
 	// Enqueue all links
-	go func() {
-		for _, link := range links {
-			queue <- link
-		}
-		close(queue) // Mark the queue as complete
-	}()
+	// go func() {
+	// 	for _, link := range links {
+	// 		queue <- link
+	// 	}
+	// 	close(queue) // Mark the queue as complete
+	// }()
 
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
-	for link := range queue {
+	for _, link := range links {
 		wg.Add(1)
 		go func(link string) {
 			defer wg.Done()

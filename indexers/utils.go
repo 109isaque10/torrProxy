@@ -9,10 +9,22 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/coregx/coregex"
+	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 
 	"github.com/goccy/go-json"
+)
+
+var (
+	romanRe         = re2.MustCompile(`i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv`)
+	subtitleSplitRe = re2.MustCompile(`(?i)\s+(?:and\s+the|the\s+|part\s+\d+|chapter\s+\d+|:\s*|-)\s+`)
+	cleanRe         = re2.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`)
+	langRe          = re2.MustCompile(`(?i)(Dual|Nacional|Dublado)`)
+	dateRe          = re2.MustCompile(` (\d:)`)
+	launchRe        = re2.MustCompile(`Lançado:\s*(.+)$`)
+	spaceRe         = re2.MustCompile(`\s+`)
+	completRe       = re2.MustCompile("complet")
+	collectionRe    = re2.MustCompile("collection")
 )
 
 //
@@ -44,7 +56,7 @@ func ParseIntFromText(s string) int {
 	if s == "" {
 		return 0
 	}
-	re := coregex.MustCompile(`\d+`)
+	re := re2.MustCompile(`\d+`)
 	m := re.FindString(s)
 	if m == "" {
 		return 0
@@ -93,7 +105,7 @@ func buildTorrProxyDownloadLink(indexerID, dlURL string) string {
 
 func cleanTitle(title, year, quality, language string) string {
 	// Strip non-english title and keep english between parentheses
-	if m := coregex.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`).FindStringSubmatch(title); len(m) == 4 {
+	if m := cleanRe.FindStringSubmatch(title); len(m) == 4 {
 		title = strings.TrimSpace(m[2] + m[3])
 	}
 
@@ -110,7 +122,7 @@ func cleanTitle(title, year, quality, language string) string {
 		title += " " + language
 	}
 
-	return coregex.MustCompile(`(?i)(Dual|Nacional|Dublado)`).ReplaceAllString(title, "Brazilian $1")
+	return langRe.ReplaceAllString(title, "Brazilian $1")
 }
 
 func extractDate(s *goquery.Selection) string {
@@ -118,7 +130,7 @@ func extractDate(s *goquery.Selection) string {
 	s.Find("p").EachWithBreak(func(i int, p *goquery.Selection) bool {
 		txt := strings.TrimSpace(p.Text())
 		if strings.Contains(txt, "Lançado:") {
-			if m := coregex.MustCompile(`Lançado:\s*(.+)$`).FindStringSubmatch(txt); len(m) == 2 {
+			if m := launchRe.FindStringSubmatch(txt); len(m) == 2 {
 				dateText = strings.TrimSpace(m[1])
 			}
 			return false
@@ -126,7 +138,7 @@ func extractDate(s *goquery.Selection) string {
 		return true
 	})
 	if dateText != "" {
-		dateText = coregex.MustCompile(` (\d:)`).ReplaceAllString(dateText, " 0$1")
+		dateText = dateRe.ReplaceAllString(dateText, " 0$1")
 	}
 	return dateText
 }

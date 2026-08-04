@@ -1,10 +1,5 @@
 package indexers
 
-// Converted & extended from capybarabr-api.yml (UNIT3D API).
-// Config via env:
-//  - CAPYBARA_APIKEY
-//  - CAPYBARA_BASE (default https://capybarabr.com/)
-
 import (
 	"context"
 	"encoding/json"
@@ -16,9 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"torrProxy/caching"
 	"torrProxy/types"
 
-	"github.com/coregx/coregex"
+	"github.com/jellydator/ttlcache/v3"
+	"github.com/wasilibs/go-re2"
+	"go.uber.org/zap"
 )
 
 type CapybaraBRAPIIndexer struct {
@@ -26,6 +24,8 @@ type CapybaraBRAPIIndexer struct {
 	APIKey    string
 	Freeleech bool
 	Client    *http.Client
+
+	cache *ttlcache.Cache[string, any]
 }
 
 func (c *CapybaraBRAPIIndexer) Name() string {
@@ -70,9 +70,22 @@ func intFromInterface(v interface{}) int {
 }
 
 func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
-	m := coregex.MustCompile("complet")
-	if m.MatchString(strings.ToLower(query)) {
+	qLow := strings.ToLower(query)
+	if completRe.MatchString(qLow) {
 		return nil, fmt.Errorf("no need to search for packs")
+	} else if collectionRe.MatchString(qLow) {
+		return nil, fmt.Errorf("no need to search for collections")
+	}
+
+	// Check cache first if cache is available
+	if c.cache != nil {
+		cacheKey := caching.GenerateCacheKey(c.Id(), query)
+		if cached := c.cache.Get(cacheKey); cached != nil {
+			if results, ok := cached.Value().([]types.Result); ok {
+				zap.L().Debug("📦 Cache hit for capybarabr search", zap.String("query", query))
+				return results, nil
+			}
+		}
 	}
 
 	u, err := c.buildURL()
@@ -134,7 +147,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		// free mapping (api returns false/true) -> map to numeric factor
 		free := false
 		if raw, ok := attrs["freeleech"]; ok {
-			m := coregex.MustCompile("100[%]?")
+			m := re2.MustCompile("100[%]?")
 			free = m.MatchString(types.ToString(raw))
 		}
 		if c.Freeleech && !free {
@@ -167,6 +180,13 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		out = append(out, res)
 	}
 
+	// Cache the results if cache is available
+	if c.cache != nil {
+		cacheKey := caching.GenerateCacheKey(c.Id(), query)
+		c.cache.Set(cacheKey, out, time.Hour)
+		zap.L().Debug("💾 Cached capybarabr search results", zap.String("query", query), zap.String("key", cacheKey), zap.Duration("ttl", time.Hour), zap.Int("count", len(out)))
+	}
+
 	return out, nil
 }
 
@@ -176,6 +196,7 @@ func init() {
 	idx := &CapybaraBRAPIIndexer{
 		BaseURL: base,
 		APIKey:  apiKey,
+		cache:   caching.C().Cache,
 	}
 	types.Indexers = append(types.Indexers, idx)
 }

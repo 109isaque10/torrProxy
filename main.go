@@ -125,13 +125,17 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	flat := make([]FlatResult, 0)
 	var errs []string
 	for i := 0; i < len(toSearch); i++ {
-		br := <-ch
-		if br.Error != "" {
-			errs = append(errs, br.Indexer+": "+br.Error)
-			continue
-		}
-		for _, r := range br.Results {
-			flat = append(flat, FlatResult{Result: r, Source: br.Indexer})
+		select {
+		case br := <-ch:
+			if br.Error != "" {
+				errs = append(errs, br.Indexer+": "+br.Error)
+				continue
+			}
+			for _, r := range br.Results {
+				flat = append(flat, FlatResult{Result: r, Source: br.Indexer})
+			}
+		case <-ctx.Done():
+			errs = append(errs, "timeout waiting for indexers")
 		}
 	}
 

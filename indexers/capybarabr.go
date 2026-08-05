@@ -8,7 +8,6 @@ import (
 	neturl "net/url"
 	"os"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 	"torrProxy/caching"
@@ -27,6 +26,10 @@ type CapybaraBRAPIIndexer struct {
 
 	cache *ttlcache.Cache[string, any]
 }
+
+var (
+	freelechRe = re2.MustCompile(`100%?`)
+)
 
 func (c *CapybaraBRAPIIndexer) Name() string {
 	return "CapybaraBR (API)"
@@ -50,23 +53,6 @@ func (c *CapybaraBRAPIIndexer) buildURL() (*neturl.URL, error) {
 	}
 	u.Path = path.Join(u.Path, "api/torrents/filter")
 	return u, nil
-}
-
-func intFromInterface(v interface{}) int {
-	if v == nil {
-		return 0
-	}
-	switch x := v.(type) {
-	case float64:
-		return int(x)
-	case int:
-		return x
-	case string:
-		if i, err := strconv.Atoi(x); err == nil {
-			return i
-		}
-	}
-	return 0
 }
 
 func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
@@ -147,8 +133,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		// free mapping (api returns false/true) -> map to numeric factor
 		free := false
 		if raw, ok := attrs["freeleech"]; ok {
-			m := re2.MustCompile("100[%]?")
-			free = m.MatchString(types.ToString(raw))
+			free = freelechRe.MatchString(types.ToString(raw))
 		}
 		if c.Freeleech && !free {
 			return nil, fmt.Errorf("not free")

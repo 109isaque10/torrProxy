@@ -16,15 +16,12 @@ import (
 )
 
 var (
-	romanRe         = re2.MustCompile(`i|ii|iii|iv|v|vi|vii|viii|ix|x|xi|xii|xiii|xiv|xv`)
-	subtitleSplitRe = re2.MustCompile(`(?i)\s+(?:and\s+the|the\s+|part\s+\d+|chapter\s+\d+|:\s*|-)\s+`)
-	cleanRe         = re2.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`)
-	langRe          = re2.MustCompile(`(?i)(Dual|Nacional|Dublado)`)
-	dateRe          = re2.MustCompile(` (\d:)`)
-	launchRe        = re2.MustCompile(`Lançado:\s*(.+)$`)
-	spaceRe         = re2.MustCompile(`\s+`)
-	completRe       = re2.MustCompile("complet")
-	collectionRe    = re2.MustCompile("collection")
+	cleanRe      = re2.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`)
+	langRe       = re2.MustCompile(`(?i)(Dual|Nacional|Dublado)`)
+	dateRe       = re2.MustCompile(` (\d:)`)
+	launchRe     = re2.MustCompile(`Lançado:\s*(.+)$`)
+	completRe    = re2.MustCompile("complet")
+	collectionRe = re2.MustCompile("collection")
 )
 
 //

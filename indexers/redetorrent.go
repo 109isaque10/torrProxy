@@ -126,36 +126,6 @@ func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result,
 		}
 	})
 
-	// // Now scrape each detail page
-	// resultsCh := make(chan []types.Result)
-	// var wg sync.WaitGroup
-	// semaphore := make(chan struct{}, 5) // limit concurrency
-
-	// seen := make(map[string]struct{})
-	// for _, link := range links {
-	// 	wg.Add(1)
-	// 	go func(link string) {
-	// 		defer wg.Done()
-	// 		semaphore <- struct{}{}
-	// 		defer func() { <-semaphore }()
-	// 		item, err := r.scrapeDetailPage(ctx, link, seen)
-	// 		resultsCh <- item
-	// 		if err != nil {
-	// 			return
-	// 		}
-	// 	}(link)
-	// }
-
-	// go func() {
-	// 	wg.Wait()
-	// 	close(resultsCh)
-	// }()
-
-	// var results []types.Result
-	// for item := range resultsCh {
-	// 	results = append(results, item...)
-	// }
-
 	// Enqueue and process links with a queued semaphore
 	results := r.processLinksWithQueue(ctx, links)
 

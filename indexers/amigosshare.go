@@ -40,6 +40,10 @@ type AmigosShareIndexer struct {
 	cache *ttlcache.Cache[string, any]
 }
 
+var (
+	queryRe = re2.MustCompile(`\s+`)
+)
+
 func (a *AmigosShareIndexer) Name() string {
 	return "Amigos Share Club (ASC)"
 }
@@ -291,7 +295,7 @@ func (a *AmigosShareIndexer) login() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := re2.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(query), "%") // spaces -> %
+	q := queryRe.ReplaceAllString(strings.TrimSpace(query), "%") // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err
@@ -447,7 +451,14 @@ func init() {
 	idx.Client = newAmigosClient()
 	err := idx.login()
 	if err != nil {
-		return
+		for i := range 5 {
+			err := idx.login()
+			if err == nil {
+				break
+			} else if i == 4 {
+				return
+			}
+		}
 	}
 
 	types.Indexers = append(types.Indexers, idx)

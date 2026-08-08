@@ -101,7 +101,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		return nil, fmt.Errorf("capybarabr: bad response %d", resp.StatusCode)
 	}
 
-	var payload map[string]interface{}
+	var payload map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
@@ -111,21 +111,21 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		resultsRaw = payload["results"]
 	}
 
-	resultsSlice, _ := resultsRaw.([]interface{})
+	resultsSlice, _ := resultsRaw.([]any)
 	if resultsSlice == nil {
 		return nil, fmt.Errorf("capybarabr: unexpected json structure")
 	}
 
 	out := make([]types.Result, 0, len(resultsSlice))
 	for _, ri := range resultsSlice {
-		item, _ := ri.(map[string]interface{})
+		item, _ := ri.(map[string]any)
 		if item == nil {
 			continue
 		}
 
 		attrs := item
 		if rawAttrs, ok := item["attributes"]; ok {
-			if m, ok := rawAttrs.(map[string]interface{}); ok {
+			if m, ok := rawAttrs.(map[string]any); ok {
 				attrs = m
 			}
 		}

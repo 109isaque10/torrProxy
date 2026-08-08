@@ -33,7 +33,7 @@ type Indexer interface {
 
 var Indexers []Indexer
 
-func ToString(v interface{}) string {
+func ToString(v any) string {
 	if v == nil {
 		return ""
 	}

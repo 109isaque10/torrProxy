@@ -140,7 +140,7 @@ func extractDate(s *goquery.Selection) string {
 	return dateText
 }
 
-func toInt(v interface{}) int {
+func toInt(v any) int {
 	switch x := v.(type) {
 	case float64:
 		return int(x)

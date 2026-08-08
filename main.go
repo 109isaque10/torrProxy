@@ -15,6 +15,7 @@ import (
 	_ "golang.org/x/crypto/x509roots/fallback"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func init() {
@@ -25,6 +26,8 @@ func init() {
 	zapConfig := zap.NewDevelopmentConfig()
 	encoder := zap.NewDevelopmentEncoderConfig()
 	//zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	encoder.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	encoder.EncodeTime = zapcore.ISO8601TimeEncoder
 	zapConfig.EncoderConfig = encoder
 	zapConfig.Encoding = "console"
 	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
@@ -103,6 +106,11 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			br := backendResp{Indexer: idx.Name(), Results: results}
 			if err != nil {
 				br.Error = err.Error()
+				if strings.Contains(err.Error(), "no need") {
+					zap.L().Warn("Skipping some searches", zap.String("indexer", idx.Name()), zap.Error(err))
+				} else {
+					zap.L().Error("Search error", zap.String("indexer", idx.Name()), zap.Error(err))
+				}
 			}
 
 			select {
@@ -127,7 +135,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < len(toSearch); i++ {
 		select {
 		case br := <-ch:
-			if br.Error != "" {
+			if br.Error != "" && !strings.Contains(br.Error, "no need") {
 				errs = append(errs, br.Indexer+": "+br.Error)
 				continue
 			}
@@ -141,7 +149,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	// If everything failed, return an error
 	if len(flat) == 0 && len(errs) > 0 {
-		http.Error(w, "all backends failed: "+strings.Join(errs, " | "), http.StatusBadGateway)
+		http.Error(w, "some backends failed: "+strings.Join(errs, " | "), http.StatusBadGateway)
 		return
 	}
 

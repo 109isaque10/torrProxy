@@ -8,6 +8,8 @@ import (
 	"time"
 	"torrProxy/indexers"
 	"torrProxy/types"
+
+	"go.uber.org/zap"
 )
 
 // RegisterTorrProxyDownload registers the single download endpoint on the provided mux.
@@ -23,12 +25,14 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	indexerParam := r.URL.Query().Get("indexer")
 	dlURL := r.URL.Query().Get("dl_url")
 	if indexerParam == "" || dlURL == "" {
+		zap.L().Error("missing indexer or dl_url!")
 		http.Error(w, "missing indexer or dl_url", http.StatusBadRequest)
 		return
 	}
 
 	idx := types.FindIndexer(indexerParam)
 	if idx == nil {
+		zap.L().Error("indexer not found!")
 		http.Error(w, "indexer not found: "+indexerParam, http.StatusBadRequest)
 		return
 	}
@@ -58,6 +62,7 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 	resp, err := client.Do(req)
 	if err != nil {
+		zap.L().Error("failed to download torrent")
 		http.Error(w, "failed to download torrent: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -65,6 +70,7 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		http.Error(w, fmt.Sprintf("torrent download returned %d: %s", resp.StatusCode, string(b)), http.StatusBadGateway)
+		zap.L().Error("torrent download returned non ok status", zap.String("status", resp.Status), zap.ByteString("body", b))
 		return
 	}
 

@@ -19,7 +19,7 @@ func RegisterTorrProxyDownload(mux *http.ServeMux) {
 }
 
 func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
 	indexerParam := r.URL.Query().Get("indexer")

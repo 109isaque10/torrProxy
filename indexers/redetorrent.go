@@ -63,7 +63,7 @@ func (r *RedeTorrent) keywordPreprocess(q string) string {
 	return s
 }
 
-func (r *RedeTorrent) Search(ctx context.Context, query string) ([]types.Result, error) {
+func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
 	if collectionRe.MatchString(strings.ToLower(query)) {
 		return nil, fmt.Errorf("no need to search for collections")
 	}
@@ -225,7 +225,7 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 			InfoHash:    infoHash,
 			Size:        size,
 			PubDate:     pub,
-			TorrentURL:  magnet,
+			DownloadURL: magnet,
 		})
 	}
 

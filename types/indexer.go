@@ -16,11 +16,11 @@ type Result struct {
 	Description string    `json:"description,omitempty"`
 	Free        bool      `json:"free,omitempty"`
 	Size        string    `json:"size,omitempty"`
-	PubDate     time.Time `json:"pubdate,omitempty"`
+	PubDate     time.Time `json:"pubdate,omitzero"`
 	Seeders     int       `json:"seeders,omitempty"`
 	Leechers    int       `json:"leechers,omitempty"`
 	InfoHash    string    `json:"infohash,omitempty"`
-	TorrentURL  string    `json:"torrent_url,omitempty"`
+	DownloadURL string    `json:"download_url,omitempty"`
 }
 
 // Indexer is the interface all indexers implement.
@@ -28,7 +28,7 @@ type Indexer interface {
 	Name() string
 	Id() string
 	// Search performs a query (use ctx to set timeouts/cancellation).
-	Search(ctx context.Context, query string) ([]Result, error)
+	Search(ctx context.Context, query, alt string) ([]Result, error)
 }
 
 var Indexers []Indexer

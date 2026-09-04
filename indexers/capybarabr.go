@@ -55,7 +55,7 @@ func (c *CapybaraBRAPIIndexer) buildURL() (*neturl.URL, error) {
 	return u, nil
 }
 
-func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
+func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
 	qLow := strings.ToLower(query)
 	if completRe.MatchString(qLow) {
 		return nil, fmt.Errorf("no need to search for packs")
@@ -151,15 +151,15 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query string) ([]type
 		pub := ParseDateWithFormats(createdAt, []string{"01/02/2006 15:04:05 -07:00", time.RFC3339, "2006-01-02T15:04:05.000000Z"})
 
 		res := types.Result{
-			Title:      title,
-			Link:       types.ToString(attrs["details_link"]),
-			Size:       types.ToString(attrs["size"]),
-			Free:       free,
-			PubDate:    pub,
-			Seeders:    toInt(attrs["seeders"]),
-			Leechers:   toInt(attrs["leechers"]),
-			InfoHash:   types.ToString(attrs["info_hash"]),
-			TorrentURL: buildTorrProxyDownloadLink(c.Id(), download),
+			Title:       title,
+			Link:        types.ToString(attrs["details_link"]),
+			Size:        types.ToString(attrs["size"]),
+			Free:        free,
+			PubDate:     pub,
+			Seeders:     toInt(attrs["seeders"]),
+			Leechers:    toInt(attrs["leechers"]),
+			InfoHash:    types.ToString(attrs["info_hash"]),
+			DownloadURL: buildTorrProxyDownloadLink(c.Id(), download),
 		}
 
 		out = append(out, res)

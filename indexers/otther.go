@@ -1,0 +1,270 @@
+package indexers
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"torrProxy/caching"
+	"torrProxy/types"
+
+	"github.com/goccy/go-json"
+	"github.com/jellydator/ttlcache/v3"
+	"go.uber.org/zap"
+)
+
+type Otther struct {
+	BaseURL  string
+	Username string
+	Password string
+
+	client    *http.Client
+	loginOnce sync.Once
+	loginErr  error
+
+	cache *ttlcache.Cache[string, any]
+}
+
+func init() {
+	jar, _ := cookiejar.New(nil)
+
+	types.Indexers = append(types.Indexers, &Otther{
+		BaseURL:  "https://otther.org",
+		Username: os.Getenv("OTTHER_USERNAME"),
+		Password: os.Getenv("OTTHER_PASSWORD"),
+		client: &http.Client{
+			Jar: jar,
+		},
+	})
+}
+
+func (o *Otther) Name() string {
+	return "Otther"
+}
+
+func (o *Otther) Id() string {
+	return "otther"
+}
+
+// Structs for API Requests & Responses
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Ok bool `json:"ok"`
+}
+
+type ottherSearchResult struct {
+	Results []struct {
+		ID   string `json:"id"`
+		Nome string `json:"nome"`
+	} `json:"results"`
+}
+
+type ottherPost struct {
+	ID          string    `json:"id"`
+	PublishedAt time.Time `json:"publicadoEm"`
+	FileSize    string    `json:"fileSize"`
+	Ficha       struct {
+		Titulo    string `json:"titulo"`
+		Descricao string `json:"descricao"`
+	} `json:"ficha"`
+	UploadTitle string `json:"uploadTitle"`
+	Links       []struct {
+		URL    string `json:"url"`
+		Status string `json:"status"`
+	} `json:"links,omitempty"`
+	MagnetLink string `json:"magnetLink,omitempty"`
+}
+
+// Authenticate performs login once and stores cookies in the client jar
+func (o *Otther) ensureLoggedIn(ctx context.Context) error {
+	o.loginOnce.Do(func() {
+		loginURL := fmt.Sprintf("%s/api/auth/login", o.BaseURL)
+
+		payload, err := json.Marshal(loginRequest{
+			Username: o.Username,
+			Password: o.Password,
+		})
+		if err != nil {
+			o.loginErr = fmt.Errorf("failed to marshal login payload: %w", err)
+			return
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(payload))
+		if err != nil {
+			o.loginErr = fmt.Errorf("failed to create login request: %w", err)
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+		resp, err := o.client.Do(req)
+		if err != nil {
+			o.loginErr = fmt.Errorf("login request failed: %w", err)
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Println(string(body))
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			o.loginErr = fmt.Errorf("unexpected status code on login: %d", resp.StatusCode)
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Println(string(body))
+			return
+		}
+
+		var res loginResponse
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			o.loginErr = fmt.Errorf("failed to decode login response: %w", err)
+			return
+		}
+
+		if !res.Ok {
+			o.loginErr = fmt.Errorf("login response returned ok: false")
+			return
+		}
+	})
+
+	return o.loginErr
+}
+
+func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
+	if err := o.ensureLoggedIn(ctx); err != nil {
+		return nil, fmt.Errorf("otther authentication failed: %w", err)
+	}
+
+	// Check cache first if cache is available
+	if o.cache != nil {
+		cacheKey := caching.GenerateCacheKey(o.Id(), alt)
+		if cached := o.cache.Get(cacheKey); cached != nil {
+			if results, ok := cached.Value().([]types.Result); ok {
+				zap.L().Debug("📦 Cache hit for otther search", zap.String("query", alt))
+				return results, nil
+			}
+		}
+	}
+
+	searchURL := fmt.Sprintf("%s/api/search?q=%s", o.BaseURL, url.QueryEscape(alt))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create search request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Println(string(body))
+		return nil, fmt.Errorf("unexpected status code on search: %d\nbody: %s", resp.StatusCode, string(body))
+	}
+
+	var searchData ottherSearchResult
+	if err := json.NewDecoder(resp.Body).Decode(&searchData); err != nil {
+		return nil, fmt.Errorf("failed to parse search results: %w", err)
+	}
+
+	var results []types.Result
+
+	for _, item := range searchData.Results {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		if item.ID == "" {
+			continue
+		}
+
+		postResult, err := o.fetchPostDetails(ctx, item.ID, item.Nome)
+		if err != nil {
+			continue
+		}
+
+		if len(postResult) > 0 {
+			results = append(results, postResult...)
+		}
+	}
+
+	// Cache the results if cache is available
+	if o.cache != nil {
+		cacheKey := caching.GenerateCacheKey(o.Id(), alt)
+		o.cache.Set(cacheKey, results, 2*time.Hour)
+		zap.L().Debug("💾 Cached otther search results", zap.String("query(alt)", alt), zap.String("key", cacheKey), zap.Duration("ttl", 2*time.Hour), zap.Int("count", len(results)))
+	}
+
+	return results, nil
+}
+
+func (o *Otther) fetchPostDetails(ctx context.Context, postID, searchName string) ([]types.Result, error) {
+	postURL := fmt.Sprintf("%s/api/posts/%s", o.BaseURL, postID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, postURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status code %d for post %s", resp.StatusCode, postID)
+	}
+
+	var post ottherPost
+	if err := json.NewDecoder(resp.Body).Decode(&post); err != nil {
+		return nil, err
+	}
+
+	title := post.UploadTitle
+	if title == "" {
+		title = searchName
+	}
+
+	var results []types.Result
+
+	for _, l := range post.Links {
+		if strings.EqualFold(l.Status, "offline") {
+			continue
+		}
+
+		results = append(results, types.Result{
+			Title:       title,
+			Link:        fmt.Sprintf("%s/post/%s", o.BaseURL, postID),
+			DownloadURL: l.URL,
+			Description: post.Ficha.Descricao,
+			Size:        post.FileSize,
+			PubDate:     post.PublishedAt,
+		})
+	}
+
+	return results, nil
+}

@@ -32,10 +32,9 @@ type AmigosShareIndexer struct {
 	Sort      string
 	Order     string
 
-	mu                  sync.RWMutex
-	lastLoginCheck      time.Time
-	loginCheckValid     time.Duration // How long to trust the login state
-	isCurrentlyLoggedIn bool
+	client    *http.Client
+	loginOnce sync.Once
+	loginErr  error
 
 	cache *ttlcache.Cache[string, any]
 }
@@ -63,10 +62,6 @@ func newAmigosClient() *http.Client {
 func (a *AmigosShareIndexer) EnsureClient() {
 	if a.Client == nil {
 		a.Client = newAmigosClient()
-	}
-	// Initialize login check validity period (5 minutes default)
-	if a.loginCheckValid == 0 {
-		a.loginCheckValid = 10 * time.Minute
 	}
 }
 
@@ -194,103 +189,66 @@ func (a *AmigosShareIndexer) login() error {
 	}
 	a.EnsureClient()
 
-	// 1) GET login page to collect cookies and hidden inputs
-	loginURL := a.resolveAction("account-login.php")
-	reqGet, _ := http.NewRequest(http.MethodGet, loginURL, nil)
-	reqGet.Header.Set("User-Agent", "torrProxy/1.0")
-	respGet, err := a.Client.Do(reqGet)
-	if err != nil {
-		return fmt.Errorf("amigosshare: GET login page failed: %w", err)
-	}
-	defer respGet.Body.Close()
-
-	getBody, _ := io.ReadAll(respGet.Body)
-	doc, _ := goquery.NewDocumentFromReader(strings.NewReader(string(getBody)))
-
-	// Collect form values
-	formValues := neturl.Values{}
-	if doc != nil {
-		doc.Find("form input[name]").Each(func(i int, in *goquery.Selection) {
-			if name, ok := in.Attr("name"); ok {
-				val, _ := in.Attr("value")
-				formValues.Set(name, val)
-			}
-		})
-	}
-
-	// Ensure required fields are set according to YAML: username, password, autologout
-	formValues.Set("username", a.Username)
-	formValues.Set("password", a.Password)
-	formValues.Set("autologout", "yes")
-
-	// POST login
-	reqPost, _ := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
-	reqPost.Header.Set("User-Agent", "torrProxy/1.0")
-	reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	reqPost.Header.Set("Referer", loginURL)
-
-	respPost, err := a.Client.Do(reqPost)
-	if err != nil {
-		return fmt.Errorf("POST login failed: %w", err)
-	}
-	defer respPost.Body.Close()
-
-	postBody, _ := io.ReadAll(respPost.Body)
-
-	// Check for error alerts
-	if doc2, err := goquery.NewDocumentFromReader(strings.NewReader(string(postBody))); err == nil {
-		if sel := doc2.Find(".alert"); sel.Length() > 0 {
-			msg := strings.TrimSpace(sel.First().Text())
-			if msg == "" {
-				msg = "login failed: server returned alert"
-			}
-			return errors.New("login error: " + msg)
+	a.loginOnce.Do(func() {
+		// 1) GET login page to collect cookies and hidden inputs
+		loginURL := a.resolveAction("account-login.php")
+		reqGet, _ := http.NewRequest(http.MethodGet, loginURL, nil)
+		reqGet.Header.Set("User-Agent", "torrProxy/1.0")
+		respGet, err := a.Client.Do(reqGet)
+		if err != nil {
+			a.loginErr = fmt.Errorf("amigosshare: GET login page failed: %w", err)
+			return
 		}
-	}
+		defer respGet.Body.Close()
 
-	// Verify login
-	checkURL, _ := neturl.Parse(a.BaseURL)
-	checkURL.Path = path.Join(checkURL.Path, "torrents-search.php")
+		getBody, _ := io.ReadAll(respGet.Body)
+		doc, _ := goquery.NewDocumentFromReader(strings.NewReader(string(getBody)))
 
-	req2, _ := http.NewRequest(http.MethodGet, checkURL.String(), nil)
-	req2.Header.Set("User-Agent", "torrProxy/1.0")
-	resp2, err := a.Client.Do(req2)
-	if err != nil {
-		return fmt.Errorf("GET check page failed: %w", err)
-	}
-	defer resp2.Body.Close()
-
-	checkBody, _ := io.ReadAll(resp2.Body)
-	checkStr := strings.ToLower(string(checkBody))
-
-	// Check for meta refresh to login
-	if strings.Contains(checkStr, "account-login.php") && strings.Contains(checkStr, "refresh") {
-		return errors.New("login failed (redirected to login page)")
-	}
-
-	// Check for logout link
-	if doc3, err := goquery.NewDocumentFromReader(strings.NewReader(string(checkBody))); err == nil {
-		foundLogout := false
-		doc3.Find("a").EachWithBreak(func(i int, s *goquery.Selection) bool {
-			if href, ok := s.Attr("href"); ok {
-				if strings.Contains(href, "account-logout.php") {
-					foundLogout = true
-					return false
+		// Collect form values
+		formValues := neturl.Values{}
+		if doc != nil {
+			doc.Find("form input[name]").Each(func(i int, in *goquery.Selection) {
+				if name, ok := in.Attr("name"); ok {
+					val, _ := in.Attr("value")
+					formValues.Set(name, val)
 				}
-			}
-			t := strings.ToLower(strings.TrimSpace(s.Text()))
-			if strings.Contains(t, "logout") || strings.Contains(t, "sair") {
-				foundLogout = true
-				return false
-			}
-			return true
-		})
-		if !foundLogout {
-			return errors.New("login failed (logout link not found)")
+			})
 		}
-	}
 
-	return nil
+		// Ensure required fields are set according to YAML: username, password, autologout
+		formValues.Set("username", a.Username)
+		formValues.Set("password", a.Password)
+		formValues.Set("autologout", "yes")
+
+		// POST login
+		reqPost, _ := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
+		reqPost.Header.Set("User-Agent", "torrProxy/1.0")
+		reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		reqPost.Header.Set("Referer", loginURL)
+
+		respPost, err := a.Client.Do(reqPost)
+		if err != nil {
+			a.loginErr = fmt.Errorf("POST login failed: %w", err)
+			return
+		}
+		defer respPost.Body.Close()
+
+		postBody, _ := io.ReadAll(respPost.Body)
+
+		// Check for error alerts
+		if doc2, err := goquery.NewDocumentFromReader(strings.NewReader(string(postBody))); err == nil {
+			if sel := doc2.Find(".alert"); sel.Length() > 0 {
+				msg := strings.TrimSpace(sel.First().Text())
+				if msg == "" {
+					msg = "login failed: server returned alert"
+				}
+				a.loginErr = errors.New("login error: " + msg)
+				return
+			}
+		}
+	})
+
+	return a.loginErr
 }
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
@@ -318,7 +276,7 @@ func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
 	return u.String(), nil
 }
 
-func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.Result, error) {
+func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
 	qLow := strings.ToLower(query)
 	if collectionRe.MatchString(qLow) {
 		query = collectionRe.ReplaceAllString(qLow, "coleção")
@@ -406,7 +364,7 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.
 			Seeders:     seeders,
 			Leechers:    leechers,
 			InfoHash:    "",
-			TorrentURL:  buildTorrProxyDownloadLink(a.Id(), AbsURL(a.BaseURL, downloadHref)),
+			DownloadURL: buildTorrProxyDownloadLink(a.Id(), AbsURL(a.BaseURL, downloadHref)),
 		}
 
 		if downloadVol == 0.0 {
@@ -417,7 +375,7 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query string) ([]types.
 	})
 
 	if len(out) == 0 && strings.Contains(query, "complet") {
-		out, err = a.Search(ctx, strings.ReplaceAll(query, " complet", ""))
+		out, err = a.Search(ctx, strings.ReplaceAll(query, " complet", ""), "")
 		if err != nil {
 			return nil, err
 		}

@@ -67,6 +67,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing q parameter", http.StatusBadRequest)
 		return
 	}
+
 	indexerParam := r.URL.Query().Get("indexers")
 	var toSearch []types.Indexer
 
@@ -89,7 +90,10 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	// Alternative/Translated title
+	alt := r.URL.Query().Get("alt")
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 
 	type backendResp struct {
@@ -102,7 +106,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	// query backends in parallel
 	for _, idx := range toSearch {
 		go func(idx types.Indexer) {
-			results, err := idx.Search(ctx, q)
+			results, err := idx.Search(ctx, q, alt)
 			br := backendResp{Indexer: idx.Name(), Results: results}
 			if err != nil {
 				br.Error = err.Error()

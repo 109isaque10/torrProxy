@@ -164,3 +164,30 @@ func defaultEnv(key, def string) string {
 func getEnv(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), `"'`)
 }
+
+// CleanAndCutTitle strips everything from s01/complete/1080p onwards and normalizes spaces
+func CleanAndCutTitle(rawTitle string) string {
+	lower := strings.ToLower(rawTitle)
+	// Replace common delimiters with spaces
+	cleaned := strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(lower)
+
+	// Truncate at the first occurrence of s01, season, complete, etc.
+	if idx := strings.Index(cleaned, " s0"); idx != -1 {
+		cleaned = cleaned[:idx]
+	}
+	if idx := strings.Index(cleaned, " season"); idx != -1 {
+		cleaned = cleaned[:idx]
+	}
+	if idx := strings.Index(cleaned, " complet"); idx != -1 {
+		cleaned = cleaned[:idx]
+	}
+
+	return strings.TrimSpace(cleaned)
+}
+
+// IsValidPrefix checks if the cleaned title starts with or contains the search query
+func IsValidPrefix(query, rawTitle string) bool {
+	cleanQ := CleanAndCutTitle(query)
+	cleanT := CleanAndCutTitle(rawTitle)
+	return strings.Contains(cleanT, cleanQ)
+}

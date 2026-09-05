@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	neturl "net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
@@ -177,11 +176,17 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query, alt string) ([
 
 func init() {
 	base := defaultEnv("CAPYBARA_BASE", "https://capybarabr.com/")
-	apiKey := os.Getenv("CAPYBARA_APIKEY")
+	apiKey := defaultEnv("CAPYBARA_APIKEY", "")
+
 	idx := &CapybaraBRAPIIndexer{
 		BaseURL: base,
 		APIKey:  apiKey,
 		cache:   caching.C().Cache,
 	}
+
+	if idx.APIKey == "" {
+		return
+	}
+
 	types.Indexers = append(types.Indexers, idx)
 }

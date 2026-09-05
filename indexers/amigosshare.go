@@ -389,6 +389,10 @@ func init() {
 		Order: defaultEnv("AMIGOS_ORDER", "desc"),
 		cache: caching.C().Cache,
 	}
+	if idx.Username == "" || idx.Password == "" {
+		return
+	}
+
 	// ensure we have client with cookiejar
 	idx.Client = newAmigosClient()
 	err := idx.login()

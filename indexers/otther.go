@@ -35,14 +35,26 @@ type Otther struct {
 func init() {
 	jar, _ := cookiejar.New(nil)
 
-	types.Indexers = append(types.Indexers, &Otther{
+	idx := &Otther{
 		BaseURL:  "https://otther.org",
 		Username: defaultEnv("OTTHER_USERNAME", ""),
 		Password: defaultEnv("OTTHER_PASSWORD", ""),
+		cache:    caching.C().Cache,
 		client: &http.Client{
 			Jar: jar,
 		},
-	})
+	}
+
+	if idx.Username == "" || idx.Password == "" {
+		return
+	}
+
+	if err := idx.ensureLoggedIn(); err != nil {
+		zap.L().Error("otther login failed, disabling it!")
+		return
+	}
+
+	types.Indexers = append(types.Indexers, idx)
 }
 
 func (o *Otther) Name() string {
@@ -153,16 +165,12 @@ func (o *Otther) ensureLoggedIn() error {
 }
 
 func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
-	if err := o.ensureLoggedIn(); err != nil {
-		return nil, fmt.Errorf("otther authentication failed: %w", err)
-	}
-
 	// Check cache first if cache is available
 	if o.cache != nil {
 		cacheKey := caching.GenerateCacheKey(o.Id(), alt)
 		if cached := o.cache.Get(cacheKey); cached != nil {
 			if results, ok := cached.Value().([]types.Result); ok {
-				zap.L().Debug("📦 Cache hit for otther search", zap.String("query", alt))
+				zap.L().Debug("📦 Cache hit for otther search", zap.String("query(alt)", alt))
 				return results, nil
 			}
 		}

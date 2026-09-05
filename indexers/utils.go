@@ -155,8 +155,12 @@ func toInt(v any) int {
 }
 
 func defaultEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+	if v := getEnv(key); v != "" {
 		return v
 	}
 	return def
+}
+
+func getEnv(key string) string {
+	return strings.Trim(strings.TrimSpace(os.Getenv(key)), `"'`)
 }

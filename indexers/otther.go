@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +37,8 @@ func init() {
 
 	types.Indexers = append(types.Indexers, &Otther{
 		BaseURL:  "https://otther.org",
-		Username: os.Getenv("OTTHER_USERNAME"),
-		Password: os.Getenv("OTTHER_PASSWORD"),
+		Username: defaultEnv("OTTHER_USERNAME", ""),
+		Password: defaultEnv("OTTHER_PASSWORD", ""),
 		client: &http.Client{
 			Jar: jar,
 		},
@@ -89,8 +88,15 @@ type ottherPost struct {
 }
 
 // Authenticate performs login once and stores cookies in the client jar
-func (o *Otther) ensureLoggedIn(ctx context.Context) error {
+func (o *Otther) ensureLoggedIn() error {
+	if o.Username == "" || o.Password == "" {
+		return nil
+	}
+
 	o.loginOnce.Do(func() {
+		authCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
 		loginURL := fmt.Sprintf("%s/api/auth/login", o.BaseURL)
 
 		payload, err := json.Marshal(loginRequest{
@@ -102,7 +108,7 @@ func (o *Otther) ensureLoggedIn(ctx context.Context) error {
 			return
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, bytes.NewBuffer(payload))
+		req, err := http.NewRequestWithContext(authCtx, http.MethodPost, loginURL, bytes.NewBuffer(payload))
 		if err != nil {
 			o.loginErr = fmt.Errorf("failed to create login request: %w", err)
 			return
@@ -114,16 +120,18 @@ func (o *Otther) ensureLoggedIn(ctx context.Context) error {
 		resp, err := o.client.Do(req)
 		if err != nil {
 			o.loginErr = fmt.Errorf("login request failed: %w", err)
-			body, _ := io.ReadAll(resp.Body)
-			fmt.Println(string(body))
 			return
 		}
 		defer resp.Body.Close()
 
+		// if resp.StatusCode != http.StatusOK {
+		// 	o.loginErr = fmt.Errorf("unexpected status code on login: %d", resp.StatusCode)
+		// 	return
+		// }
+
 		if resp.StatusCode != http.StatusOK {
-			o.loginErr = fmt.Errorf("unexpected status code on login: %d", resp.StatusCode)
-			body, _ := io.ReadAll(resp.Body)
-			fmt.Println(string(body))
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			o.loginErr = fmt.Errorf("unexpected status code on login: %d, body: %s", resp.StatusCode, string(bodyBytes))
 			return
 		}
 
@@ -137,13 +145,15 @@ func (o *Otther) ensureLoggedIn(ctx context.Context) error {
 			o.loginErr = fmt.Errorf("login response returned ok: false")
 			return
 		}
+
+		zap.L().Info("✅ Otther authentication successful")
 	})
 
 	return o.loginErr
 }
 
 func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
-	if err := o.ensureLoggedIn(ctx); err != nil {
+	if err := o.ensureLoggedIn(); err != nil {
 		return nil, fmt.Errorf("otther authentication failed: %w", err)
 	}
 

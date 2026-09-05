@@ -187,41 +187,23 @@ func (a *AmigosShareIndexer) login() error {
 	if a.Username == "" || a.Password == "" {
 		return nil
 	}
+
 	a.EnsureClient()
 
 	a.loginOnce.Do(func() {
-		// 1) GET login page to collect cookies and hidden inputs
+		authCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
 		loginURL := a.resolveAction("account-login.php")
-		reqGet, _ := http.NewRequest(http.MethodGet, loginURL, nil)
-		reqGet.Header.Set("User-Agent", "torrProxy/1.0")
-		respGet, err := a.Client.Do(reqGet)
-		if err != nil {
-			a.loginErr = fmt.Errorf("amigosshare: GET login page failed: %w", err)
-			return
-		}
-		defer respGet.Body.Close()
-
-		getBody, _ := io.ReadAll(respGet.Body)
-		doc, _ := goquery.NewDocumentFromReader(strings.NewReader(string(getBody)))
-
-		// Collect form values
-		formValues := neturl.Values{}
-		if doc != nil {
-			doc.Find("form input[name]").Each(func(i int, in *goquery.Selection) {
-				if name, ok := in.Attr("name"); ok {
-					val, _ := in.Attr("value")
-					formValues.Set(name, val)
-				}
-			})
-		}
 
 		// Ensure required fields are set according to YAML: username, password, autologout
+		formValues := neturl.Values{}
 		formValues.Set("username", a.Username)
 		formValues.Set("password", a.Password)
 		formValues.Set("autologout", "yes")
 
 		// POST login
-		reqPost, _ := http.NewRequest(http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
+		reqPost, _ := http.NewRequestWithContext(authCtx, http.MethodPost, loginURL, strings.NewReader(formValues.Encode()))
 		reqPost.Header.Set("User-Agent", "torrProxy/1.0")
 		reqPost.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		reqPost.Header.Set("Referer", loginURL)
@@ -246,6 +228,8 @@ func (a *AmigosShareIndexer) login() error {
 				return
 			}
 		}
+
+		zap.L().Info("✅ AmigosShare authentication successful")
 	})
 
 	return a.loginErr

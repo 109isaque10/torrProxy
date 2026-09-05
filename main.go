@@ -43,7 +43,7 @@ func main() {
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
+		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
 

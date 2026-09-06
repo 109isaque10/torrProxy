@@ -55,12 +55,17 @@ func (r *RedeTorrent) buildURL() (string, error) {
 }
 
 // keywordPreprocess performs the YAML filters: tolower, replace " complet" -> "", season S0/S -> "temporada X"
-func (r *RedeTorrent) keywordPreprocess(q string) string {
+func (r *RedeTorrent) keywordPreprocess(q string) (string, string) {
 	s := strings.ToLower(q)
+	year := ""
+  if yearRe.MatchString(s) {
+		year = yearRe.FindString(s)
+		s = strings.TrimSpace(yearRe.ReplaceAllString(s, ""))
+	}	
 	s = strings.ReplaceAll(s, " complet", "")
 	// s0(\d{1,2})$ -> temporada $1
 	s = seasonRe.ReplaceAllString(s, "${1}ª temporada")
-	return s
+	return s, year
 }
 
 func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
@@ -68,7 +73,8 @@ func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Re
 		return nil, fmt.Errorf("no need to search for collections")
 	}
 
-	query = r.keywordPreprocess(query)
+	var year string
+	query, year = r.keywordPreprocess(query)
 
 	// Check cache first if cache is available
 	if r.cache != nil {
@@ -117,7 +123,7 @@ func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Re
 	var links []string
 	doc.Find(".capa_lista a").Each(func(i int, s *goquery.Selection) {
 		if title, exists := s.Attr("title"); exists {
-			if !strings.Contains(strings.ToLower(title), query) {
+			if !IsValidPrefix(query, year, title) || seasonRe.MatchString(query) && strings.Contains(title, "emporada") {
 				return
 			}
 		}

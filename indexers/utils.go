@@ -19,6 +19,7 @@ var (
 	cleanRe      = re2.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`)
 	langRe       = re2.MustCompile(`(?i)(Dual|Nacional|Dublado)`)
 	dateRe       = re2.MustCompile(` (\d:)`)
+	yearRe       = re2.MustCompile(`(19|20)\d{2}`)
 	launchRe     = re2.MustCompile(`Lançado:\s*(.+)$`)
 	completRe    = re2.MustCompile("complet")
 	collectionRe = re2.MustCompile("collection")
@@ -169,7 +170,7 @@ func getEnv(key string) string {
 func CleanAndCutTitle(rawTitle string) string {
 	lower := strings.ToLower(rawTitle)
 	// Replace common delimiters with spaces
-	cleaned := strings.NewReplacer(".", " ", "_", " ", "-", " ").Replace(lower)
+	cleaned := strings.NewReplacer("(", "", ")", "", ".", " ", "_", " ", "-", " ").Replace(lower)
 
 	// Truncate at the first occurrence of s01, season, complete, etc.
 	if idx := strings.Index(cleaned, " s0"); idx != -1 {
@@ -186,8 +187,16 @@ func CleanAndCutTitle(rawTitle string) string {
 }
 
 // IsValidPrefix checks if the cleaned title starts with or contains the search query
-func IsValidPrefix(query, rawTitle string) bool {
+func IsValidPrefix(query, year, rawTitle string) bool {
 	cleanQ := CleanAndCutTitle(query)
 	cleanT := CleanAndCutTitle(rawTitle)
-	return strings.Contains(cleanT, cleanQ)
+	zap.L().Debug("validPrefix", zap.String("cleanQ",cleanQ),zap.String("cleanT",cleanT),zap.String("query",query),zap.String("title",rawTitle))
+	yearBool := true
+	if year != "" && yearRe.MatchString(cleanT) {
+		yearMatch, _ := strconv.Atoi(yearRe.FindString(cleanT))
+		yearInt, _ := strconv.Atoi(year)
+		yearBool = yearInt == yearMatch || yearInt == yearMatch-1 || yearInt == yearMatch+1
+		zap.L().Debug("year match", zap.Int("yearMatch",yearMatch),zap.Int("yearInt",yearInt),zap.Bool("yearBool",yearBool))
+	}
+	return strings.Contains(cleanT, cleanQ) && yearBool
 }

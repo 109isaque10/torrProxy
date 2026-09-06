@@ -3,6 +3,7 @@ package indexers
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"net/http"
 	"regexp"
 	"strings"
@@ -48,8 +49,9 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 		}
 	}
 
-	searchURL := fmt.Sprintf("https://%s/?s=%s", b.BaseURL, strings.ReplaceAll(query, " ", "+"))
+	searchURL := fmt.Sprintf("https://%s/?s=%s", b.BaseURL, url.QueryEscape(query))
 
+	zap.L().Debug("search", zap.String("searchurl",searchURL))
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating search request: %w", err)
@@ -87,7 +89,8 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 		}
 
 		title := strings.TrimSpace(s.Text())
-		if title == "" || !IsValidPrefix(query, title) {
+		if title == "" || !IsValidPrefix(query, "", title) {
+			zap.L().Debug("invalid title", zap.String("title", title))
 			return true
 		}
 

@@ -17,7 +17,6 @@ import (
 	"torrProxy/types"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 
 	"github.com/PuerkitoBio/goquery"
@@ -38,10 +37,6 @@ type AmigosShareIndexer struct {
 
 	cache *ttlcache.Cache[string, any]
 }
-
-var (
-	queryRe = re2.MustCompile(`\s+`)
-)
 
 func (a *AmigosShareIndexer) Name() string {
 	return "Amigos Share Club (ASC)"
@@ -237,7 +232,7 @@ func (a *AmigosShareIndexer) login() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := queryRe.ReplaceAllString(strings.TrimSpace(query), "%") // spaces -> %
+	q := neturl.PathEscape(query) // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err
@@ -264,6 +259,9 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 	qLow := strings.ToLower(query)
 	if collectionRe.MatchString(qLow) {
 		query = collectionRe.ReplaceAllString(qLow, "coleção")
+	}
+	if yearRe.MatchString(qLow) {
+		query = strings.TrimSpace(yearRe.ReplaceAllString(qLow, ""))
 	}
 
 	a.EnsureClient()

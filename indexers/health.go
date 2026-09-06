@@ -15,6 +15,7 @@ func NewHealthChecker(interval time.Duration) *HealthChecker {
 }
 
 func (hc *HealthChecker) Start(ctx context.Context) {
+	hc.checkAll(ctx)
 	ticker := time.NewTicker(hc.interval)
 
 	go func() {

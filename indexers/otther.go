@@ -3,6 +3,7 @@ package indexers
 import (
 	"bytes"
 	"context"
+	"cmp"
 	"fmt"
 	"io"
 	"net/http"
@@ -176,7 +177,9 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 		}
 	}
 
-	searchURL := fmt.Sprintf("%s/api/search?q=%s", o.BaseURL, url.QueryEscape(alt))
+	q := cmp.Or(alt, query)
+
+	searchURL := fmt.Sprintf("%s/api/search?q=%s", o.BaseURL, url.QueryEscape(q))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {

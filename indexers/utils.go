@@ -1,6 +1,7 @@
 package indexers
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -23,11 +24,77 @@ var (
 	launchRe     = re2.MustCompile(`Lançado:\s*(.+)$`)
 	completRe    = re2.MustCompile("complet")
 	collectionRe = re2.MustCompile("collection")
+	infoHashRe   = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
+	magnetDnRe   = re2.MustCompile(`dn=([^&]+)`)
+	seasonRe     = re2.MustCompile(`(?i)s\d{1,2}`)
 )
 
 //
 // Helpers reused by indexers
 //
+
+// Helper to safely fetch meta tag attributes
+func getMetaContent(doc *goquery.Document, selector string) string {
+	val, _ := doc.Find(selector).Attr("content")
+	return strings.TrimSpace(val)
+}
+
+// encodeISO88591 encodes spaces as '+' and non-ASCII chars like 'ª' as single-byte ISO hex (%AA)
+func encodeISO88591(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		switch {
+		case r == ' ':
+			buf.WriteString("+")
+		case r == 'ª':
+			buf.WriteString("%AA")
+		case r == 'º':
+			buf.WriteString("%BA")
+		case r == 'ç':
+			buf.WriteString("%E7")
+		case r == 'Ç':
+			buf.WriteString("%C7")
+		case r == 'ã':
+			buf.WriteString("%E3")
+		case r < 128:
+			buf.WriteRune(r)
+		default:
+			// Fallback for unexpected runes
+			buf.WriteString(fmt.Sprintf("%%%02X", r))
+		}
+	}
+	return buf.String()
+}
+
+func ExtractInfoHash(magnet string) string {
+	// magnet:?xt=urn:btih:INFOHASH&dn=...
+	matches := infoHashRe.FindStringSubmatch(magnet)
+	if len(matches) > 1 {
+		return strings.ToLower(matches[1])
+	}
+	return ""
+}
+
+func formatQuery(q string) string {
+	// For TV shows, convert "S01E02" to "S0X02" to match site format
+	q = strings.ToLower(q)
+	q = strings.ReplaceAll(q, " complet", "")
+	q = seasonRe.ReplaceAllString(q, "")
+	return q
+}
+
+func keywordPreprocess(q string) (string, string) {
+	s := strings.ToLower(q)
+	year := ""
+	if yearRe.MatchString(s) {
+		year = yearRe.FindString(s)
+		s = strings.TrimSpace(yearRe.ReplaceAllString(s, ""))
+	}
+	s = strings.ReplaceAll(s, " complet", "")
+	// s0(\d{1,2})$ -> temporada $1
+	s = seasonRe.ReplaceAllString(s, "${1}ª temporada")
+	return s, year
+}
 
 // AbsURL resolves href (which may be relative) against base.
 func AbsURL(base, href string) string {
@@ -170,7 +237,7 @@ func getEnv(key string) string {
 func CleanAndCutTitle(rawTitle string) string {
 	lower := strings.ToLower(rawTitle)
 	// Replace common delimiters with spaces
-	cleaned := strings.NewReplacer("(", "", ")", "", ".", " ", "_", " ", "-", " ").Replace(lower)
+	cleaned := strings.NewReplacer("-", " ", "(", " ", ")", " ", ".", " ", "_", " ", "-", " ").Replace(lower)
 
 	// Truncate at the first occurrence of s01, season, complete, etc.
 	if idx := strings.Index(cleaned, " s0"); idx != -1 {
@@ -179,24 +246,26 @@ func CleanAndCutTitle(rawTitle string) string {
 	if idx := strings.Index(cleaned, " season"); idx != -1 {
 		cleaned = cleaned[:idx]
 	}
+	if idx := strings.Index(cleaned, " temporada"); idx != -1 {
+		cleaned = cleaned[:idx]
+	}
 	if idx := strings.Index(cleaned, " complet"); idx != -1 {
 		cleaned = cleaned[:idx]
 	}
 
-	return strings.TrimSpace(cleaned)
+	return strings.Join(strings.Fields(cleaned), " ")
 }
 
 // IsValidPrefix checks if the cleaned title starts with or contains the search query
 func IsValidPrefix(query, year, rawTitle string) bool {
 	cleanQ := CleanAndCutTitle(query)
 	cleanT := CleanAndCutTitle(rawTitle)
-	zap.L().Debug("validPrefix", zap.String("cleanQ",cleanQ),zap.String("cleanT",cleanT),zap.String("query",query),zap.String("title",rawTitle))
 	yearBool := true
 	if year != "" && yearRe.MatchString(cleanT) {
 		yearMatch, _ := strconv.Atoi(yearRe.FindString(cleanT))
 		yearInt, _ := strconv.Atoi(year)
 		yearBool = yearInt == yearMatch || yearInt == yearMatch-1 || yearInt == yearMatch+1
-		zap.L().Debug("year match", zap.Int("yearMatch",yearMatch),zap.Int("yearInt",yearInt),zap.Bool("yearBool",yearBool))
 	}
-	return strings.Contains(cleanT, cleanQ) && yearBool
+	bool := strings.Contains(cleanT, cleanQ) && yearBool
+	return bool
 }

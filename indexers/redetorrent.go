@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	neturl "net/url"
-	"os"
 	"path"
 	"strings"
 	"sync"
@@ -15,17 +14,11 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/wasilibs/go-re2"
 	"go.uber.org/zap"
 )
 
-var infoHashRe = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
-var magnetDnRe = re2.MustCompile(`dn=([^&]+)`)
-var seasonRe = re2.MustCompile(`s0?(\d{1,2})$`)
-
 type RedeTorrent struct {
-	BaseURL string
-	Client  *http.Client
+	BaseIndexer
 
 	cache *ttlcache.Cache[string, any]
 }
@@ -38,11 +31,12 @@ func (r *RedeTorrent) Id() string {
 	return "redetorrent"
 }
 
-func (r *RedeTorrent) client() *http.Client {
-	if r.Client != nil {
-		return r.Client
-	}
-	return &http.Client{Timeout: 15 * time.Second}
+func (r *RedeTorrent) IsEnabled() bool {
+	return r.BaseIndexer.IsEnabled()
+}
+
+func (r *RedeTorrent) Ping(ctx context.Context) bool {
+	return r.BaseIndexer.Ping(ctx, r.Name())
 }
 
 func (r *RedeTorrent) buildURL() (string, error) {
@@ -54,27 +48,12 @@ func (r *RedeTorrent) buildURL() (string, error) {
 	return u.String(), nil
 }
 
-// keywordPreprocess performs the YAML filters: tolower, replace " complet" -> "", season S0/S -> "temporada X"
-func (r *RedeTorrent) keywordPreprocess(q string) (string, string) {
-	s := strings.ToLower(q)
-	year := ""
-  if yearRe.MatchString(s) {
-		year = yearRe.FindString(s)
-		s = strings.TrimSpace(yearRe.ReplaceAllString(s, ""))
-	}	
-	s = strings.ReplaceAll(s, " complet", "")
-	// s0(\d{1,2})$ -> temporada $1
-	s = seasonRe.ReplaceAllString(s, "${1}ª temporada")
-	return s, year
-}
-
-func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
-	if collectionRe.MatchString(strings.ToLower(query)) {
+func (r *RedeTorrent) Search(ctx context.Context, originalQuery, alt string) ([]types.Result, error) {
+	if collectionRe.MatchString(strings.ToLower(originalQuery)) {
 		return nil, fmt.Errorf("no need to search for collections")
 	}
 
-	var year string
-	query, year = r.keywordPreprocess(query)
+	query, year := keywordPreprocess(originalQuery)
 
 	// Check cache first if cache is available
 	if r.cache != nil {
@@ -103,7 +82,7 @@ func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Re
 	}
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 
-	resp, err := r.client().Do(req)
+	resp, err := r.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -118,12 +97,12 @@ func (r *RedeTorrent) Search(ctx context.Context, query, alt string) ([]types.Re
 		return nil, err
 	}
 
-	query = r.FormatQuery(query)
+	query = formatQuery(query)
 	// Extract links from search results (.capa_lista elements)
 	var links []string
 	doc.Find(".capa_lista a").Each(func(i int, s *goquery.Selection) {
 		if title, exists := s.Attr("title"); exists {
-			if !IsValidPrefix(query, year, title) || seasonRe.MatchString(query) && strings.Contains(title, "emporada") {
+			if !IsValidPrefix(query, year, title) || !seasonRe.MatchString(originalQuery) && strings.Contains(title, "emporada") {
 				return
 			}
 		}
@@ -152,7 +131,7 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 	}
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := r.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -238,32 +217,16 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 	return results, nil
 }
 
-func ExtractInfoHash(magnet string) string {
-	// magnet:?xt=urn:btih:INFOHASH&dn=...
-	matches := infoHashRe.FindStringSubmatch(magnet)
-	if len(matches) > 1 {
-		return strings.ToLower(matches[1])
-	}
-	return ""
-}
-
-func (r *RedeTorrent) FormatQuery(q string) string {
-	// For TV shows, convert "S01E02" to "S0X02" to match site format
-	q = strings.ToLower(q)
-	q = strings.ReplaceAll(q, " complet", "")
-	q = seasonRe.ReplaceAllString(q, "")
-	return q
-}
-
 func init() {
-	base := os.Getenv("REDE_TORRENT_BASE")
-	if base == "" {
-		base = "https://redetorrent.com"
-	}
 	idx := &RedeTorrent{
-		BaseURL: base,
-		cache:   caching.C().Cache,
+		BaseIndexer: BaseIndexer{
+			BaseURL: defaultEnv("REDE_TORRENT_BASE", "https://redetorrent.com"),
+			Client:  &http.Client{Timeout: 20 * time.Second},
+		},
+		cache: caching.C().Cache,
 	}
+	idx.IsAlive.Store(true)
+
 	types.Indexers = append(types.Indexers, idx)
 }
 

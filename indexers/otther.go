@@ -22,11 +22,11 @@ import (
 )
 
 type Otther struct {
-	BaseURL  string
+	BaseIndexer
+
 	Username string
 	Password string
 
-	client    *http.Client
 	loginOnce sync.Once
 	loginErr  error
 
@@ -37,18 +37,22 @@ func init() {
 	jar, _ := cookiejar.New(nil)
 
 	idx := &Otther{
-		BaseURL:  "https://otther.org",
+		BaseIndexer: BaseIndexer{
+			BaseURL: "https://otther.org",
+			Client: &http.Client{
+				Jar: jar,
+			},
+		},
 		Username: defaultEnv("OTTHER_USERNAME", ""),
 		Password: defaultEnv("OTTHER_PASSWORD", ""),
 		cache:    caching.C().Cache,
-		client: &http.Client{
-			Jar: jar,
-		},
 	}
 
 	if idx.Username == "" || idx.Password == "" {
 		return
 	}
+
+	idx.IsAlive.Store(true)
 
 	if err := idx.ensureLoggedIn(); err != nil {
 		zap.L().Error("otther login failed, disabling it!")
@@ -64,6 +68,14 @@ func (o *Otther) Name() string {
 
 func (o *Otther) Id() string {
 	return "otther"
+}
+
+func (o *Otther) IsEnabled() bool {
+	return o.BaseIndexer.IsEnabled()
+}
+
+func (o *Otther) Ping(ctx context.Context) bool {
+	return o.BaseIndexer.Ping(ctx, o.Name())
 }
 
 // Structs for API Requests & Responses
@@ -130,7 +142,7 @@ func (o *Otther) ensureLoggedIn() error {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-		resp, err := o.client.Do(req)
+		resp, err := o.Client.Do(req)
 		if err != nil {
 			o.loginErr = fmt.Errorf("login request failed: %w", err)
 			return
@@ -189,7 +201,7 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := o.client.Do(req)
+	resp, err := o.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("search request failed: %w", err)
 	}
@@ -250,7 +262,7 @@ func (o *Otther) fetchPostDetails(ctx context.Context, postID, searchName string
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := o.client.Do(req)
+	resp, err := o.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -23,15 +23,14 @@ import (
 )
 
 type AmigosShareIndexer struct {
-	BaseURL   string
-	Client    *http.Client
+	BaseIndexer
+
 	Username  string
 	Password  string
 	Freeleech bool
 	Sort      string
 	Order     string
 
-	client    *http.Client
 	loginOnce sync.Once
 	loginErr  error
 
@@ -44,6 +43,14 @@ func (a *AmigosShareIndexer) Name() string {
 
 func (a *AmigosShareIndexer) Id() string {
 	return "amigosshare"
+}
+
+func (a *AmigosShareIndexer) IsEnabled() bool {
+	return a.BaseIndexer.IsEnabled()
+}
+
+func (a *AmigosShareIndexer) Ping(ctx context.Context) bool {
+	return a.BaseIndexer.Ping(ctx, a.Name())
 }
 
 func newAmigosClient() *http.Client {
@@ -232,7 +239,7 @@ func (a *AmigosShareIndexer) login() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := neturl.PathEscape(query) // spaces -> %
+	q := neturl.QueryEscape(query) // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err
@@ -256,12 +263,14 @@ func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
 }
 
 func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
-	qLow := strings.ToLower(query)
-	if collectionRe.MatchString(qLow) {
-		query = collectionRe.ReplaceAllString(qLow, "coleção")
+	query = strings.ToLower(query)
+	if collectionRe.MatchString(query) {
+		query = collectionRe.ReplaceAllString(query, "coleção")
 	}
-	if yearRe.MatchString(qLow) {
-		query = strings.TrimSpace(yearRe.ReplaceAllString(qLow, ""))
+	queryYear := ""
+	if yearRe.MatchString(query) {
+		queryYear = yearRe.FindString(query)
+		query = strings.TrimSpace(yearRe.ReplaceAllString(query, ""))
 	}
 
 	a.EnsureClient()
@@ -328,6 +337,11 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 		// Title filters
 		title = cleanTitle(title, year, quality, language)
 
+		// Perform title validation checks
+		if !IsValidPrefix(query, queryYear, title) || !seasonRe.MatchString(query) && seasonRe.MatchString(title) {
+			return
+		}
+
 		downloadVol := 1.0
 		if s.Find(`span.badge-success:contains("FREE")`).Length() > 0 {
 			downloadVol = 0.0
@@ -376,7 +390,9 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 
 func init() {
 	idx := &AmigosShareIndexer{
-		BaseURL:  defaultEnv("AMIGOS_BASE", "https://cliente.amigos-share.club/"),
+		BaseIndexer: BaseIndexer{
+			BaseURL: defaultEnv("AMIGOS_BASE", "https://cliente.amigos-share.club/"),
+		},
 		Username: defaultEnv("AMIGOS_USERNAME", ""),
 		Password: defaultEnv("AMIGOS_PASSWORD", ""),
 		Freeleech: func() bool {
@@ -390,6 +406,8 @@ func init() {
 	if idx.Username == "" || idx.Password == "" {
 		return
 	}
+
+	idx.IsAlive.Store(true)
 
 	// ensure we have client with cookiejar
 	idx.Client = newAmigosClient()

@@ -18,10 +18,10 @@ import (
 )
 
 type CapybaraBRAPIIndexer struct {
-	BaseURL   string
+	BaseIndexer
+
 	APIKey    string
 	Freeleech bool
-	Client    *http.Client
 
 	cache *ttlcache.Cache[string, any]
 }
@@ -38,11 +38,12 @@ func (c *CapybaraBRAPIIndexer) Id() string {
 	return "capybarabr"
 }
 
-func (c *CapybaraBRAPIIndexer) client() *http.Client {
-	if c.Client != nil {
-		return c.Client
-	}
-	return &http.Client{Timeout: 20 * time.Second}
+func (c *CapybaraBRAPIIndexer) IsEnabled() bool {
+	return c.BaseIndexer.IsEnabled()
+}
+
+func (c *CapybaraBRAPIIndexer) Ping(ctx context.Context) bool {
+	return c.BaseIndexer.Ping(ctx, c.Name())
 }
 
 func (c *CapybaraBRAPIIndexer) buildURL() (*neturl.URL, error) {
@@ -90,7 +91,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query, alt string) ([
 
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 
-	resp, err := c.client().Do(req)
+	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -175,14 +176,16 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query, alt string) ([
 }
 
 func init() {
-	base := defaultEnv("CAPYBARA_BASE", "https://capybarabr.com/")
-	apiKey := defaultEnv("CAPYBARA_APIKEY", "")
-
 	idx := &CapybaraBRAPIIndexer{
-		BaseURL: base,
-		APIKey:  apiKey,
-		cache:   caching.C().Cache,
+		BaseIndexer: BaseIndexer{
+			BaseURL: defaultEnv("CAPYBARA_BASE", "https://capybarabr.com/"),
+			Client:  &http.Client{Timeout: 20 * time.Second},
+		},
+		APIKey: defaultEnv("CAPYBARA_APIKEY", ""),
+		cache:  caching.C().Cache,
 	}
+
+	idx.IsAlive.Store(true)
 
 	if idx.APIKey == "" {
 		return

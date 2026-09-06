@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"torrProxy/api"
+	"torrProxy/indexers"
 	"torrProxy/types"
 
 	_ "github.com/joho/godotenv/autoload"
@@ -46,6 +47,10 @@ func main() {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 	}
+
+	// Ping all indexers every 3 minutes
+	healthChecker := indexers.NewHealthChecker(60 * time.Minute)
+	healthChecker.Start(context.Background())
 
 	zap.L().Info(fmt.Sprintf("Listening on %s", addr), zap.Strings("indexers", listIndexerIds()))
 	zap.L().Fatal("FATAL!!", zap.Error(srv.ListenAndServe()))

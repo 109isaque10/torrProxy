@@ -45,10 +45,6 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		if v.Client != nil {
 			client = v.Client
 		}
-	case *indexers.RedeTorrent:
-		if v.Client != nil {
-			client = v.Client
-		}
 	case *indexers.CapybaraBRAPIIndexer:
 		if v.Client != nil {
 			client = v.Client

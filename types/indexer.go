@@ -27,8 +27,10 @@ type Result struct {
 type Indexer interface {
 	Name() string
 	Id() string
+	IsEnabled() bool
 	// Search performs a query (use ctx to set timeouts/cancellation).
 	Search(ctx context.Context, query, alt string) ([]Result, error)
+	Ping(ctx context.Context) bool
 }
 
 var Indexers []Indexer

@@ -3,8 +3,8 @@ package indexers
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -18,7 +18,7 @@ import (
 )
 
 type BaixeTorrents struct {
-	BaseURL string
+	BaseIndexer
 
 	cache *ttlcache.Cache[string, any]
 }
@@ -26,7 +26,9 @@ type BaixeTorrents struct {
 const POSTSLIMIT = 10
 
 func init() {
-	types.Indexers = append(types.Indexers, &BaixeTorrents{"www.baixetorrentsv2.net", caching.C().Cache})
+	idx := &BaixeTorrents{BaseIndexer{BaseURL: "www.baixetorrentsv2.net", Client: &http.Client{Timeout: 15 * time.Second}}, caching.C().Cache}
+	idx.IsAlive.Store(true)
+	types.Indexers = append(types.Indexers, idx)
 }
 
 func (b *BaixeTorrents) Name() string {
@@ -35,6 +37,14 @@ func (b *BaixeTorrents) Name() string {
 
 func (b *BaixeTorrents) Id() string {
 	return "baixetorrents"
+}
+
+func (b *BaixeTorrents) IsEnabled() bool {
+	return b.BaseIndexer.IsEnabled()
+}
+
+func (b *BaixeTorrents) Ping(ctx context.Context) bool {
+	return b.BaseIndexer.Ping(ctx, b.Name())
 }
 
 func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
@@ -51,7 +61,7 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 
 	searchURL := fmt.Sprintf("https://%s/?s=%s", b.BaseURL, url.QueryEscape(query))
 
-	zap.L().Debug("search", zap.String("searchurl",searchURL))
+	zap.L().Debug("search", zap.String("searchurl", searchURL))
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating search request: %w", err)
@@ -59,8 +69,7 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := b.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("error executing search request: %w", err)
 	}
@@ -125,8 +134,7 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL string, b
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := b.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}

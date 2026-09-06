@@ -107,9 +107,14 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		Error   string
 	}
 	ch := make(chan backendResp, len(toSearch))
-
+	
 	// query backends in parallel
 	for _, idx := range toSearch {
+    // Skip disabled indexers before dispatching
+    if !idx.IsEnabled() {
+        continue
+    }		
+
 		go func(idx types.Indexer) {
 			results, err := idx.Search(ctx, q, alt)
 			br := backendResp{Indexer: idx.Name(), Results: results}
@@ -133,7 +138,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}(idx)
 	}
-
+	
 	// collect and flatten
 	type FlatResult struct {
 		types.Result

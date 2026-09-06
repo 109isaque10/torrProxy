@@ -50,14 +50,14 @@ func (b *BaseIndexer) Ping(ctx context.Context, name string) bool {
 
 	if err != nil || (resp != nil && resp.StatusCode >= 500) {
 		if b.IsAlive.CompareAndSwap(true, false) {
-			zap.L().Warn("🔴 Indexer marked offline", zap.String("indexer", name), zap.Error(err))
+			zap.L().Warn("🚫 Indexer marked offline", zap.String("indexer", name), zap.Error(err))
 		}
 		return false
 	}
 	defer resp.Body.Close()
 
 	if b.IsAlive.CompareAndSwap(false, true) {
-		zap.L().Info("🟢 Indexer recovered and reactivated", zap.String("indexer", name))
+		zap.L().Info("✔️ Indexer recovered and reactivated", zap.String("indexer", name))
 	}
 	return true
 }

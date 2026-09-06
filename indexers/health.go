@@ -34,7 +34,7 @@ func (hc *HealthChecker) Start(ctx context.Context) {
 func (hc *HealthChecker) checkAll(parentCtx context.Context) {
 	for _, idx := range types.Indexers {
 		go func(i types.Indexer) {
-			pingCtx, cancel := context.WithTimeout(parentCtx, 5*time.Second)
+			pingCtx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
 			defer cancel()
 
 			i.Ping(pingCtx)

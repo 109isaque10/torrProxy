@@ -1,7 +1,6 @@
 package indexers
 
 import (
-	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -20,13 +19,13 @@ var (
 	cleanRe      = re2.MustCompile(`^(.*?)[\(](.*?)[\)](.*?)$`)
 	langRe       = re2.MustCompile(`(?i)(Dual|Nacional|Dublado)`)
 	dateRe       = re2.MustCompile(` (\d:)`)
-	yearRe       = re2.MustCompile(`(19|20)\d{2}`)
+	yearRe       = re2.MustCompile(`(?:19|20)\d{2}`)
 	launchRe     = re2.MustCompile(`Lançado:\s*(.+)$`)
 	completRe    = re2.MustCompile("complet")
 	collectionRe = re2.MustCompile("collection")
 	infoHashRe   = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
 	magnetDnRe   = re2.MustCompile(`dn=([^&]+)`)
-	seasonRe     = re2.MustCompile(`(?i)s0{1,2}?(\d{1,2})`)
+	seasonRe     = re2.MustCompile(`(?i)s0{0,2}?(\d{1,2})`)
 )
 
 //
@@ -37,33 +36,6 @@ var (
 func getMetaContent(doc *goquery.Document, selector string) string {
 	val, _ := doc.Find(selector).Attr("content")
 	return strings.TrimSpace(val)
-}
-
-// encodeISO88591 encodes spaces as '+' and non-ASCII chars like 'ª' as single-byte ISO hex (%AA)
-func encodeISO88591(s string) string {
-	var buf strings.Builder
-	for _, r := range s {
-		switch {
-		case r == ' ':
-			buf.WriteString("+")
-		case r == 'ª':
-			buf.WriteString("%AA")
-		case r == 'º':
-			buf.WriteString("%BA")
-		case r == 'ç':
-			buf.WriteString("%E7")
-		case r == 'Ç':
-			buf.WriteString("%C7")
-		case r == 'ã':
-			buf.WriteString("%E3")
-		case r < 128:
-			buf.WriteRune(r)
-		default:
-			// Fallback for unexpected runes
-			buf.WriteString(fmt.Sprintf("%%%02X", r))
-		}
-	}
-	return buf.String()
 }
 
 func ExtractInfoHash(magnet string) string {
@@ -85,9 +57,8 @@ func formatQuery(q string) string {
 
 func keywordPreprocess(q string) (string, string) {
 	s := strings.ToLower(q)
-	year := ""
-	if yearRe.MatchString(s) {
-		year = yearRe.FindString(s)
+	year := yearRe.FindString(s)
+	if year != "" {
 		s = strings.TrimSpace(yearRe.ReplaceAllString(s, ""))
 	}
 	s = strings.ReplaceAll(s, " complet", "")

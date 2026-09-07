@@ -230,6 +230,7 @@ func init() {
 		cache: caching.C().Cache,
 	}
 	idx.IsAlive.Store(true)
+	idx.IsAuthenticated.Store(true) // No need for auth
 
 	types.Indexers = append(types.Indexers, idx)
 }
@@ -250,18 +251,22 @@ func (a *ApacheTorrent) processLinksWithQueue(ctx context.Context, links []strin
 
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
-	for i := range links {
+	for _, link := range links {
 		wg.Add(1)
 		go func(link string) {
 			defer wg.Done()
-			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
-			defer func() { <-semaphore }() // Signal the semaphore is free
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				return
+			}
 
 			item, err := a.scrapeDetailPage(ctx, link, seen, &mu)
 			if err == nil && len(item) > 0 {
 				resultsCh <- item
 			}
-		}(links[i])
+		}(link)
 	}
 
 	// Close results channel once all goroutines complete

@@ -226,6 +226,7 @@ func init() {
 		cache: caching.C().Cache,
 	}
 	idx.IsAlive.Store(true)
+	idx.IsAuthenticated.Store(true) // No need for auth
 
 	types.Indexers = append(types.Indexers, idx)
 }
@@ -234,15 +235,6 @@ func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string)
 	resultsCh := make(chan []types.Result)
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // Limit concurrency - 5 simultaneous requests
-	// queue := make(chan string, len(links)+10) // Add queue for waiting requests
-
-	// Enqueue all links
-	// go func() {
-	// 	for _, link := range links {
-	// 		queue <- link
-	// 	}
-	// 	close(queue) // Mark the queue as complete
-	// }()
 
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
@@ -250,11 +242,15 @@ func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string)
 		wg.Add(1)
 		go func(link string) {
 			defer wg.Done()
-			semaphore <- struct{}{}        // Wait for semaphore (blocks if full)
-			defer func() { <-semaphore }() // Signal the semaphore is free
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				return
+			}
 
 			item, err := r.scrapeDetailPage(ctx, link, seen, &mu)
-			if err == nil {
+			if err == nil && len(item) > 0 {
 				resultsCh <- item
 			}
 		}(link)

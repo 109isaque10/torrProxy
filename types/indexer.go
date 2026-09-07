@@ -33,6 +33,11 @@ type Indexer interface {
 	Ping(ctx context.Context) bool
 }
 
+type AuthenticatedIndexer interface {
+	EnsureLoggedIn() error
+	SetAuth(bool)
+}
+
 var Indexers []Indexer
 
 func ToString(v any) string {

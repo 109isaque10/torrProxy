@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"torrProxy/caching"
@@ -28,6 +29,7 @@ const POSTSLIMIT = 10
 func init() {
 	idx := &BaixeTorrents{BaseIndexer{BaseURL: "https://www.baixetorrentsv2.net", Client: &http.Client{Timeout: 15 * time.Second}}, caching.C().Cache}
 	idx.IsAlive.Store(true)
+	idx.IsAuthenticated.Store(true) // No need for auth
 	types.Indexers = append(types.Indexers, idx)
 }
 
@@ -61,7 +63,6 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 
 	searchURL := fmt.Sprintf("%s/?s=%s", b.BaseURL, url.QueryEscape(query))
 
-	zap.L().Debug("search", zap.String("searchurl", searchURL))
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating search request: %w", err)
@@ -84,15 +85,12 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 		return nil, fmt.Errorf("error parsing search page HTML: %w", err)
 	}
 
-	var results []types.Result
-
+	resultsCh := make(chan []types.Result)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 5)
+	var mu sync.Mutex
+	seen := make(map[string]struct{})
 	doc.Find("div.item div.title a").EachWithBreak(func(i int, s *goquery.Selection) bool {
-		select {
-		case <-ctx.Done():
-			return true
-		default:
-		}
-
 		if i > POSTSLIMIT {
 			return false
 		}
@@ -107,13 +105,39 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 			return true
 		}
 
-		torrents, err := b.parseDetailPage(ctx, pageURL, title)
-		if err == nil && len(torrents) > 0 {
-			results = append(results, torrents...)
-		}
+		wg.Add(1)
+		go func(urlStr, tStr string) {
+			defer wg.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				return
+			}
+
+			torrents, err := b.parseDetailPage(ctx, urlStr, tStr, seen, &mu)
+			if err == nil && len(torrents) > 0 {
+				select {
+				case resultsCh <- torrents:
+				case <-ctx.Done():
+				}
+			}
+		}(pageURL, title)
 
 		return true
 	})
+
+	// Close results channel once all goroutines complete
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Collect results
+	var results []types.Result
+	for item := range resultsCh {
+		results = append(results, item...)
+	}
 
 	// Cache the results if cache is available
 	if b.cache != nil {
@@ -125,7 +149,7 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 	return results, nil
 }
 
-func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL string, baseTitle string) ([]types.Result, error) {
+func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL, baseTitle string, seen map[string]struct{}, mu *sync.Mutex) ([]types.Result, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", detailURL, nil)
 	if err != nil {
 		return nil, err
@@ -157,6 +181,14 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL string, b
 			return
 		}
 
+		infoHash := ExtractInfoHash(magnetLink)
+		mu.Lock()
+		if _, exists := seen[infoHash]; exists {
+			mu.Unlock()
+		}
+		seen[infoHash] = struct{}{}
+		mu.Unlock()
+
 		itemTitle := strings.TrimSpace(s.Text())
 		if itemTitle == "" || strings.EqualFold(itemTitle, "Download") || strings.EqualFold(itemTitle, "Baixar") {
 			itemTitle = strings.TrimSpace(s.Parent().Text())
@@ -173,6 +205,7 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL string, b
 		results = append(results, types.Result{
 			Title:       itemTitle,
 			DownloadURL: magnetLink,
+			InfoHash:    infoHash,
 			Description: pageDesc,
 			Size:        size,
 			Link:        detailURL,

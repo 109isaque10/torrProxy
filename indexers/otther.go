@@ -2,8 +2,8 @@ package indexers
 
 import (
 	"bytes"
-	"context"
 	"cmp"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,7 +40,8 @@ func init() {
 		BaseIndexer: BaseIndexer{
 			BaseURL: "https://otther.org",
 			Client: &http.Client{
-				Jar: jar,
+				Jar:     jar,
+				Timeout: 15 * time.Second,
 			},
 		},
 		Username: defaultEnv("OTTHER_USERNAME", ""),
@@ -53,11 +54,7 @@ func init() {
 	}
 
 	idx.IsAlive.Store(true)
-
-	if err := idx.ensureLoggedIn(); err != nil {
-		zap.L().Error("otther login failed, disabling it!")
-		return
-	}
+	idx.IsAuthenticated.Store(true) // Checks auth after
 
 	types.Indexers = append(types.Indexers, idx)
 }
@@ -72,6 +69,10 @@ func (o *Otther) Id() string {
 
 func (o *Otther) IsEnabled() bool {
 	return o.BaseIndexer.IsEnabled()
+}
+
+func (o *Otther) SetAuth(e bool) {
+	o.BaseIndexer.IsAuthenticated.Store(e)
 }
 
 func (o *Otther) Ping(ctx context.Context) bool {
@@ -113,7 +114,7 @@ type ottherPost struct {
 }
 
 // Authenticate performs login once and stores cookies in the client jar
-func (o *Otther) ensureLoggedIn() error {
+func (o *Otther) EnsureLoggedIn() error {
 	if o.Username == "" || o.Password == "" {
 		return nil
 	}
@@ -178,9 +179,11 @@ func (o *Otther) ensureLoggedIn() error {
 }
 
 func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result, error) {
+	q := cmp.Or(alt, query)
+
 	// Check cache first if cache is available
 	if o.cache != nil {
-		cacheKey := caching.GenerateCacheKey(o.Id(), alt)
+		cacheKey := caching.GenerateCacheKey(o.Id(), q)
 		if cached := o.cache.Get(cacheKey); cached != nil {
 			if results, ok := cached.Value().([]types.Result); ok {
 				zap.L().Debug("📦 Cache hit for otther search", zap.String("query(alt)", alt))
@@ -188,8 +191,6 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 			}
 		}
 	}
-
-	q := cmp.Or(alt, query)
 
 	searchURL := fmt.Sprintf("%s/api/search?q=%s", o.BaseURL, url.QueryEscape(q))
 
@@ -218,34 +219,61 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 		return nil, fmt.Errorf("failed to parse search results: %w", err)
 	}
 
-	var results []types.Result
+	resultsCh := make(chan []types.Result)
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, 5)
+
+	var mu sync.Mutex
+	seen := make(map[string]struct{})
 
 	for _, item := range searchData.Results {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
 		if item.ID == "" {
 			continue
 		}
 
-		postResult, err := o.fetchPostDetails(ctx, item.ID, item.Nome)
-		if err != nil {
+		mu.Lock()
+		if _, exists := seen[item.ID]; exists {
+			mu.Unlock()
 			continue
 		}
+		seen[item.ID] = struct{}{}
+		mu.Unlock()
 
-		if len(postResult) > 0 {
-			results = append(results, postResult...)
-		}
+		wg.Add(1)
+		go func(id, name string) {
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				return
+			}
+
+			postResult, err := o.fetchPostDetails(ctx, id, name)
+			if err != nil {
+				return
+			}
+
+			if len(postResult) > 0 {
+				resultsCh <- postResult
+			}
+		}(item.ID, item.Nome)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	var results []types.Result
+	for item := range resultsCh {
+		results = append(results, item...)
 	}
 
 	// Cache the results if cache is available
 	if o.cache != nil {
-		cacheKey := caching.GenerateCacheKey(o.Id(), alt)
+		cacheKey := caching.GenerateCacheKey(o.Id(), q)
 		o.cache.Set(cacheKey, results, 2*time.Hour)
-		zap.L().Debug("💾 Cached otther search results", zap.String("query(alt)", alt), zap.String("key", cacheKey), zap.Duration("ttl", 2*time.Hour), zap.Int("count", len(results)))
+		zap.L().Debug("💾 Cached otther search results", zap.String("query", q), zap.String("key", cacheKey), zap.Duration("ttl", 2*time.Hour), zap.Int("count", len(results)))
 	}
 
 	return results, nil

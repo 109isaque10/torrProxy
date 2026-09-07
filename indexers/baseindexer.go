@@ -11,9 +11,10 @@ import (
 )
 
 type BaseIndexer struct {
-	BaseURL string
-	Client  *http.Client
-	IsAlive atomic.Bool
+	BaseURL         string
+	IsAuthenticated atomic.Bool
+	Client          *http.Client
+	IsAlive         atomic.Bool
 }
 
 func (b *BaseIndexer) IsEnabled() bool {
@@ -22,7 +23,7 @@ func (b *BaseIndexer) IsEnabled() bool {
 
 // Default Ping sends a lightweight HEAD or GET request to the indexer's BaseURL
 func (b *BaseIndexer) Ping(ctx context.Context, name string) bool {
-	if b.BaseURL == "" {
+	if b.BaseURL == "" || b.IsAuthenticated.Load() == false {
 		return false
 	}
 

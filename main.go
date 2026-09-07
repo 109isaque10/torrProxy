@@ -34,6 +34,25 @@ func init() {
 	zap.ReplaceGlobals(zap.Must(zapConfig.Build()))
 }
 
+func authenticateIndexers() {
+	for _, idx := range types.Indexers {
+		// Skip disabled indexers before dispatching
+		if !idx.IsEnabled() {
+			continue
+		}
+
+		go func(idx types.Indexer) {
+			if authIdx, ok := idx.(types.AuthenticatedIndexer); ok {
+				if err := authIdx.EnsureLoggedIn(); err != nil {
+					zap.L().Error("otther login failed, disabling it!")
+					authIdx.SetAuth(false)
+					return
+				}
+			}
+		}(idx)
+	}
+}
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/search", searchHandler)
@@ -51,6 +70,8 @@ func main() {
 	// Ping all indexers every 3 minutes
 	healthChecker := indexers.NewHealthChecker(60 * time.Minute)
 	healthChecker.Start(context.Background())
+
+	authenticateIndexers()
 
 	zap.L().Info(fmt.Sprintf("Listening on %s", addr), zap.Strings("indexers", listIndexerIds()))
 	zap.L().Fatal("FATAL!!", zap.Error(srv.ListenAndServe()))
@@ -107,13 +128,13 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		Error   string
 	}
 	ch := make(chan backendResp, len(toSearch))
-	
+
 	// query backends in parallel
 	for _, idx := range toSearch {
-    // Skip disabled indexers before dispatching
-    if !idx.IsEnabled() {
-        continue
-    }		
+		// Skip disabled indexers before dispatching
+		if !idx.IsEnabled() {
+			continue
+		}
 
 		go func(idx types.Indexer) {
 			results, err := idx.Search(ctx, q, alt)
@@ -138,7 +159,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}(idx)
 	}
-	
+
 	// collect and flatten
 	type FlatResult struct {
 		types.Result

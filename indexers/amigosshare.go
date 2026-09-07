@@ -49,6 +49,10 @@ func (a *AmigosShareIndexer) IsEnabled() bool {
 	return a.BaseIndexer.IsEnabled()
 }
 
+func (a *AmigosShareIndexer) SetAuth(e bool) {
+	a.BaseIndexer.IsAuthenticated.Store(e)
+}
+
 func (a *AmigosShareIndexer) Ping(ctx context.Context) bool {
 	return a.BaseIndexer.Ping(ctx, a.Name())
 }
@@ -115,14 +119,6 @@ func (a *AmigosShareIndexer) EnsureClient() {
 //	return nil
 //}
 
-func (a *AmigosShareIndexer) GetClient() *http.Client {
-	return a.Client
-}
-
-func (a *AmigosShareIndexer) GetBaseURL() string {
-	return a.BaseURL
-}
-
 // helper: resolve possibly relative action against BaseURL
 func (a *AmigosShareIndexer) resolveAction(action string) string {
 	if action == "" {
@@ -185,7 +181,7 @@ func (a *AmigosShareIndexer) resolveAction(action string) string {
 //}
 
 // login posts the login form and verifies login.
-func (a *AmigosShareIndexer) login() error {
+func (a *AmigosShareIndexer) EnsureLoggedIn() error {
 	if a.Username == "" || a.Password == "" {
 		return nil
 	}
@@ -408,20 +404,10 @@ func init() {
 	}
 
 	idx.IsAlive.Store(true)
+	idx.IsAuthenticated.Store(true) // Checks auth after
 
 	// ensure we have client with cookiejar
 	idx.Client = newAmigosClient()
-	err := idx.login()
-	if err != nil {
-		for i := range 5 {
-			err := idx.login()
-			if err == nil {
-				break
-			} else if i == 4 {
-				return
-			}
-		}
-	}
 
 	types.Indexers = append(types.Indexers, idx)
 }

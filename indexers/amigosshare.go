@@ -235,7 +235,7 @@ func (a *AmigosShareIndexer) EnsureLoggedIn() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := neturl.QueryEscape(query) // spaces -> %
+	q := neturl.PathEscape(query) // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err

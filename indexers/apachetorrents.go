@@ -239,15 +239,6 @@ func (a *ApacheTorrent) processLinksWithQueue(ctx context.Context, links []strin
 	resultsCh := make(chan []types.Result)
 	var wg sync.WaitGroup
 	semaphore := make(chan struct{}, 5) // Limit concurrency - 5 simultaneous requests
-	// queue := make(chan string, len(links)+10) // Add queue for waiting requests
-
-	// Enqueue all links
-	// go func() {
-	// 	for _, link := range links {
-	// 		queue <- link
-	// 	}
-	// 	close(queue) // Mark the queue as complete
-	// }()
 
 	var mu sync.Mutex
 	seen := make(map[string]struct{})

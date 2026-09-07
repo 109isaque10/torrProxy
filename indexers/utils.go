@@ -25,7 +25,7 @@ var (
 	collectionRe = re2.MustCompile("collection")
 	infoHashRe   = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
 	magnetDnRe   = re2.MustCompile(`dn=([^&]+)`)
-	seasonRe     = re2.MustCompile(`(?i)s0{0,2}?(\d{1,2})`)
+	seasonRe     = re2.MustCompile(`(?i)s0{0,2}(\d{1,2})`)
 )
 
 //

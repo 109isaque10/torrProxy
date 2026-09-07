@@ -241,6 +241,8 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 
 		wg.Add(1)
 		go func(id, name string) {
+			defer wg.Done()
+
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
@@ -250,11 +252,16 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 
 			postResult, err := o.fetchPostDetails(ctx, id, name)
 			if err != nil {
+				zap.L().Debug("got error on post details", zap.Error(err), zap.String("id", id), zap.String("name", name))
 				return
 			}
 
 			if len(postResult) > 0 {
-				resultsCh <- postResult
+				select {
+				case resultsCh <- postResult:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}(item.ID, item.Nome)
 	}

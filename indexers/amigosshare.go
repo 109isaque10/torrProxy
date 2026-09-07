@@ -235,14 +235,13 @@ func (a *AmigosShareIndexer) EnsureLoggedIn() error {
 
 // buildSearchURL builds torrents-search.php query URL from YAML mapping.
 func (a *AmigosShareIndexer) buildSearchURL(query string) (string, error) {
-	q := neturl.PathEscape(query) // spaces -> %
 	u, err := neturl.Parse(a.BaseURL)
 	if err != nil {
 		return "", err
 	}
 	u.Path = path.Join(u.Path, "torrents-search.php")
 	vals := neturl.Values{}
-	vals.Set("search", q)
+	vals.Set("search", query)
 	vals.Set("tipo", "precisa")
 	if a.Sort != "" {
 		vals.Set("sort", a.Sort)
@@ -286,6 +285,8 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 	if err != nil {
 		return nil, err
 	}
+
+	zap.L().Debug(url)
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("User-Agent", "torrProxy/1.0")

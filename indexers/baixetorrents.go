@@ -185,6 +185,7 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL, baseTitl
 		mu.Lock()
 		if _, exists := seen[infoHash]; exists {
 			mu.Unlock()
+			return
 		}
 		seen[infoHash] = struct{}{}
 		mu.Unlock()

@@ -286,8 +286,6 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 		return nil, err
 	}
 
-	zap.L().Debug(url)
-
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 

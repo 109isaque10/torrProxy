@@ -169,5 +169,6 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
 	_ = enc.Encode(flat)
 }

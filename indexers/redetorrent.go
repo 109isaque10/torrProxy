@@ -158,12 +158,7 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 			line = strings.TrimSpace(line)
 
 			if strings.Contains(line, "Tamanho:") {
-				size = strings.TrimSuffix(strings.TrimPrefix(line, "Tamanho: "), " GB")
-				if size == "Desconhecido" {
-					size = "0"
-				} else {
-					size += " GB"
-				}
+				size = extractSize(strings.TrimPrefix(line, "Tamanho: "))
 				continue
 			}
 			if strings.Contains(line, "Título Original:") {
@@ -232,7 +227,7 @@ func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string)
 
 	nestedResults := runParallelJobs(ctx, links, 5, func(ctx context.Context, l string) ([]types.Result, bool) {
 		item, err := r.scrapeDetailPage(ctx, l, seen, &mu)
-		if err == nil && len(item) == 0 {
+		if err != nil || len(item) == 0 {
 			return nil, false
 		}
 		return item, true

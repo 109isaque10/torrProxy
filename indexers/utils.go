@@ -29,7 +29,7 @@ var (
 	magnetDnRe   = re2.MustCompile(`dn=([^&]+)`)
 	seasonRe     = re2.MustCompile(`(?i)s0{0,2}(\d{1,2})`)
 	numsRe       = re2.MustCompile(`\d+`)
-	sizeRe       = re2.MustCompile(`(?i)\b(\d+(?:[\.,]\d+)?\s*(?:GB|MB|TB|KB))\b`)
+	sizeRe       = re2.MustCompile(`(?i)\b((?:\d+[\.,]\d+)?\s(?:GB|MB|TB|KB))\b`)
 )
 
 //
@@ -298,4 +298,12 @@ func runParallelJobs[T any, R any](
 	}
 
 	return results
+}
+
+func extractSize(text string) string {
+	match := sizeRe.FindStringSubmatch(text)
+	if len(match) > 1 {
+		return strings.ToUpper(strings.TrimSpace(match[1]))
+	}
+	return ""
 }

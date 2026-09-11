@@ -39,6 +39,7 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve details URL and choose client (use indexer's logged-in client when possible)
 	client := http.DefaultClient
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	switch v := idx.(type) {
 	case *indexers.AmigosShareIndexer:
 		v.EnsureClient()
@@ -49,12 +50,14 @@ func torrProxyDownloadHandler(w http.ResponseWriter, r *http.Request) {
 		if v.Client != nil {
 			client = v.Client
 		}
+		if v.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+v.APIKey)
+		}
 	default:
 		// fallback to default
 	}
 
 	// Fetch the torrent file and stream back using the indexer's client (so cookies preserved)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil)
 	req.Header.Set("User-Agent", "torrProxy/1.0")
 	resp, err := client.Do(req)
 	if err != nil {

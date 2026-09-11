@@ -239,7 +239,7 @@ func (a *ApacheTorrent) processLinksWithQueue(ctx context.Context, links []strin
 
 	nestedResults := runParallelJobs(ctx, links, 5, func(ctx context.Context, l string) ([]types.Result, bool) {
 		item, err := a.scrapeDetailPage(ctx, l, seen, &mu)
-		if err == nil && len(item) == 0 {
+		if err != nil || len(item) == 0 {
 			return nil, false
 		}
 		return item, true

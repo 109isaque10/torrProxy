@@ -186,6 +186,7 @@ func init() {
 	}
 
 	idx.IsAlive.Store(true)
+	idx.IsAuthenticated.Store(true) // Checks auth after
 
 	if idx.APIKey == "" {
 		return

@@ -42,10 +42,10 @@ func (b *BaseIndexer) Ping(ctx context.Context, name string) bool {
 
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode >= 500 {
-		defer resp.Body.Close()
-
 		// Fallback to GET if HEAD method is forbidden (405) by the site
 		if resp != nil && resp.StatusCode == http.StatusMethodNotAllowed {
+			defer resp.Body.Close()
+
 			req.Method = http.MethodGet
 			resp, err = client.Do(req)
 		}

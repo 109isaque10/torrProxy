@@ -110,7 +110,7 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 
 	nestedResults := runParallelJobs(ctx, jobs, 5, func(ctx context.Context, j types.Job) ([]types.Result, bool) {
 		torrents, err := b.parseDetailPage(ctx, j.URL, j.Title, seen, &mu)
-		if err == nil && len(torrents) == 0 {
+		if err != nil || len(torrents) == 0 {
 			return nil, false
 		}
 		return torrents, true
@@ -197,12 +197,4 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL, baseTitl
 	})
 
 	return results, nil
-}
-
-func extractSize(text string) string {
-	match := sizeRe.FindStringSubmatch(text)
-	if len(match) > 1 {
-		return strings.ToUpper(strings.TrimSpace(match[1]))
-	}
-	return ""
 }

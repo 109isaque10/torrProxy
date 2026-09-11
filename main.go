@@ -103,7 +103,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		// comma-separated names
 		requested := map[string]bool{}
 		for nm := range strings.SplitSeq(indexerParam, ",") {
-			requested[strings.TrimSpace(nm)] = true
+			requested[types.FindIndexer(strings.TrimSpace(nm)).Id()] = true
 		}
 		for _, idx := range types.Indexers {
 			if requested[idx.Id()] && idx.IsEnabled() {

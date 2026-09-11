@@ -136,7 +136,7 @@ func (c *CapybaraBRAPIIndexer) Search(ctx context.Context, query, alt string) ([
 			free = freelechRe.MatchString(types.ToString(raw))
 		}
 		if c.Freeleech && !free {
-			return nil, fmt.Errorf("not free")
+			continue
 		}
 
 		title := types.ToString(attrs["name"])

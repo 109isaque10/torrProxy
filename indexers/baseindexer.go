@@ -42,6 +42,8 @@ func (b *BaseIndexer) Ping(ctx context.Context, name string) bool {
 
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode >= 500 {
+		defer resp.Body.Close()
+
 		// Fallback to GET if HEAD method is forbidden (405) by the site
 		if resp != nil && resp.StatusCode == http.StatusMethodNotAllowed {
 			req.Method = http.MethodGet
@@ -53,6 +55,7 @@ func (b *BaseIndexer) Ping(ctx context.Context, name string) bool {
 		if b.IsAlive.CompareAndSwap(true, false) {
 			zap.L().Warn("🚫 Indexer marked offline", zap.String("indexer", name), zap.Error(err))
 		}
+		defer resp.Body.Close()
 		return false
 	}
 	defer resp.Body.Close()

@@ -23,6 +23,11 @@ type Result struct {
 	DownloadURL string    `json:"download_url,omitempty"`
 }
 
+type Job struct {
+	URL   string
+	Title string
+}
+
 // Indexer is the interface all indexers implement.
 type Indexer interface {
 	Name() string
@@ -68,22 +73,9 @@ func FindIndexer(idOrName string) Indexer {
 	lower := strings.ToLower(idOrName)
 	for _, idx := range Indexers {
 		// prefer ID if implemented
-		if strings.ToLower(getIndexerID(idx)) == lower || strings.ToLower(idx.Name()) == lower {
+		if strings.ToLower(idx.Id()) == lower || strings.ToLower(idx.Name()) == lower {
 			return idx
 		}
 	}
 	return nil
-}
-
-// getIndexerID returns idx.Id() if available via type assertion, else Name().
-func getIndexerID(idx Indexer) string {
-	type hasId interface {
-		Id() string
-	}
-	if h, ok := idx.(hasId); ok {
-		if id := strings.TrimSpace(h.Id()); id != "" {
-			return id
-		}
-	}
-	return idx.Name()
 }

@@ -44,7 +44,7 @@ func authenticateIndexers() {
 		go func(idx types.Indexer) {
 			if authIdx, ok := idx.(types.AuthenticatedIndexer); ok {
 				if err := authIdx.EnsureLoggedIn(); err != nil {
-					zap.L().Error("otther login failed, disabling it!")
+					zap.L().Error(idx.Name() + " login failed, disabling it!")
 					authIdx.SetAuth(false)
 					return
 				}
@@ -67,8 +67,8 @@ func main() {
 		WriteTimeout: 30 * time.Second,
 	}
 
-	// Ping all indexers every 3 minutes
-	healthChecker := indexers.NewHealthChecker(60 * time.Minute)
+	// Ping all indexers every 30 minutes
+	healthChecker := indexers.NewHealthChecker(30 * time.Minute)
 	healthChecker.Start(context.Background())
 
 	authenticateIndexers()
@@ -95,10 +95,10 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	indexerParam := r.URL.Query().Get("indexers")
-	var toSearch []types.Indexer
+	toSearch := make([]types.Indexer, 0, len(types.Indexers))
 
 	if indexerParam == "" {
-		toSearch = types.Indexers
+		toSearch = Filter(types.Indexers, func(idx types.Indexer) bool { return idx.IsEnabled() })
 	} else {
 		// comma-separated names
 		requested := map[string]bool{}
@@ -106,7 +106,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			requested[strings.TrimSpace(nm)] = true
 		}
 		for _, idx := range types.Indexers {
-			if requested[idx.Id()] {
+			if requested[idx.Id()] && idx.IsEnabled() {
 				toSearch = append(toSearch, idx)
 			}
 		}
@@ -131,11 +131,6 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	// query backends in parallel
 	for _, idx := range toSearch {
-		// Skip disabled indexers before dispatching
-		if !idx.IsEnabled() {
-			continue
-		}
-
 		go func(idx types.Indexer) {
 			results, err := idx.Search(ctx, q, alt)
 			br := backendResp{Indexer: idx.Name(), Results: results}
@@ -192,4 +187,15 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(flat)
+}
+
+// Filter returns a new slice containing only elements that satisfy the predicate.
+func Filter[T any](slice []T, predicate func(T) bool) []T {
+	var result []T
+	for _, v := range slice {
+		if predicate(v) {
+			result = append(result, v)
+		}
+	}
+	return result
 }

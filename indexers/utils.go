@@ -1,11 +1,13 @@
 package indexers
 
 import (
+	"context"
 	"net/url"
 	"os"
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -26,6 +28,8 @@ var (
 	infoHashRe   = re2.MustCompile(`xt=urn:btih:([a-fA-F0-9]{40})`)
 	magnetDnRe   = re2.MustCompile(`dn=([^&]+)`)
 	seasonRe     = re2.MustCompile(`(?i)s0{0,2}(\d{1,2})`)
+	numsRe       = re2.MustCompile(`\d+`)
+	sizeRe       = re2.MustCompile(`(?i)\b(\d+(?:[\.,]\d+)?\s*(?:GB|MB|TB|KB))\b`)
 )
 
 //
@@ -92,8 +96,7 @@ func ParseIntFromText(s string) int {
 	if s == "" {
 		return 0
 	}
-	re := re2.MustCompile(`\d+`)
-	m := re.FindString(s)
+	m := numsRe.FindString(s)
 	if m == "" {
 		return 0
 	}
@@ -228,8 +231,7 @@ func CleanAndCutTitle(rawTitle string) string {
 }
 
 // IsValidPrefix checks if the cleaned title starts with or contains the search query
-func IsValidPrefix(query, year, rawTitle string) bool {
-	cleanQ := CleanAndCutTitle(query)
+func IsValidPrefix(cleanQ, year, rawTitle string) bool {
 	cleanT := CleanAndCutTitle(rawTitle)
 	yearBool := true
 	if year != "" && yearRe.MatchString(cleanT) {
@@ -237,6 +239,63 @@ func IsValidPrefix(query, year, rawTitle string) bool {
 		yearInt, _ := strconv.Atoi(year)
 		yearBool = yearInt == yearMatch || yearInt == yearMatch-1 || yearInt == yearMatch+1
 	}
-	bool := strings.Contains(cleanT, cleanQ) && yearBool
-	return bool
+	return strings.Contains(cleanT, cleanQ) && yearBool
+}
+
+func runParallelJobs[T any, R any](
+	ctx context.Context,
+	items []T,
+	workerCount int,
+	fn func(ctx context.Context, item T) (R, bool),
+) []R {
+	if len(items) == 0 {
+		return nil
+	}
+
+	jobsCh := make(chan T, len(items))
+	resultsCh := make(chan R, len(items))
+
+	// Push all items to job queue and close so workers know when to stop
+	for _, item := range items {
+		jobsCh <- item
+	}
+	close(jobsCh)
+
+	var wg sync.WaitGroup
+	actualWorkers := min(workerCount, len(items))
+
+	// Spawn worker pool
+	for range actualWorkers {
+		wg.Go(func() {
+			for item := range jobsCh {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				if res, ok := fn(ctx, item); ok {
+					select {
+					case resultsCh <- res:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		})
+	}
+
+	// Wait for workers in background and close results channel
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	// Collect results
+	var results []R
+	for res := range resultsCh {
+		results = append(results, res)
+	}
+
+	return results
 }

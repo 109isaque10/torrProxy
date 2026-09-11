@@ -39,12 +39,15 @@ func (r *RedeTorrent) Ping(ctx context.Context) bool {
 	return r.BaseIndexer.Ping(ctx, r.Name())
 }
 
-func (r *RedeTorrent) buildURL() (string, error) {
+func (r *RedeTorrent) buildURL(query string) (string, error) {
 	u, err := neturl.Parse(r.BaseURL)
 	if err != nil {
 		return "", err
 	}
 	u.Path = path.Join(u.Path, "index.php")
+	qp := u.Query()
+	qp.Set("s", query)
+	u.RawQuery = qp.Encode()
 	return u.String(), nil
 }
 
@@ -66,17 +69,8 @@ func (r *RedeTorrent) Search(ctx context.Context, originalQuery, alt string) ([]
 		}
 	}
 
-	url, err := r.buildURL()
-	if err != nil {
-		return nil, err
-	}
-	u, _ := neturl.Parse(url)
-
-	qp := u.Query()
-	qp.Set("s", query)
-	u.RawQuery = qp.Encode()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	url, _ := r.buildURL(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +94,10 @@ func (r *RedeTorrent) Search(ctx context.Context, originalQuery, alt string) ([]
 	query = formatQuery(query)
 	// Extract links from search results (.capa_lista elements)
 	var links []string
+	cleanQ := CleanAndCutTitle(query)
 	doc.Find(".capa_lista a").Each(func(i int, s *goquery.Selection) {
 		if title, exists := s.Attr("title"); exists {
-			if !IsValidPrefix(query, year, title) || !seasonRe.MatchString(originalQuery) && strings.Contains(title, "emporada") {
+			if !IsValidPrefix(cleanQ, year, title) || !seasonRe.MatchString(originalQuery) && strings.Contains(title, "emporada") {
 				return
 			}
 		}
@@ -163,7 +158,7 @@ func (r *RedeTorrent) scrapeDetailPage(ctx context.Context, url string, seen map
 			line = strings.TrimSpace(line)
 
 			if strings.Contains(line, "Tamanho:") {
-				size := strings.TrimSuffix(strings.TrimPrefix(line, "Tamanho: "), " GB")
+				size = strings.TrimSuffix(strings.TrimPrefix(line, "Tamanho: "), " GB")
 				if size == "Desconhecido" {
 					size = "0"
 				} else {
@@ -232,39 +227,20 @@ func init() {
 }
 
 func (r *RedeTorrent) processLinksWithQueue(ctx context.Context, links []string) []types.Result {
-	resultsCh := make(chan []types.Result)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5) // Limit concurrency - 5 simultaneous requests
-
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
-	for _, link := range links {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
 
-			item, err := r.scrapeDetailPage(ctx, link, seen, &mu)
-			if err == nil && len(item) > 0 {
-				resultsCh <- item
-			}
-		}(link)
-	}
-
-	// Close results channel once all goroutines complete
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+	nestedResults := runParallelJobs(ctx, links, 5, func(ctx context.Context, l string) ([]types.Result, bool) {
+		item, err := r.scrapeDetailPage(ctx, l, seen, &mu)
+		if err == nil && len(item) == 0 {
+			return nil, false
+		}
+		return item, true
+	})
 
 	// Collect results
 	var results []types.Result
-	for item := range resultsCh {
+	for _, item := range nestedResults {
 		results = append(results, item...)
 	}
 	return results

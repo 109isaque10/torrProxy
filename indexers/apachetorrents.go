@@ -42,9 +42,6 @@ func (a *ApacheTorrent) Ping(ctx context.Context) bool {
 func (a *ApacheTorrent) buildSearchURL(query string) string {
 	u, _ := neturl.Parse(a.BaseURL)
 	u.Path = path.Join(u.Path, "index.php")
-	url := u.String()
-	u, _ = neturl.Parse(url)
-
 	qp := u.Query()
 	qp.Set("s", query)
 	u.RawQuery = qp.Encode()
@@ -93,6 +90,7 @@ func (a *ApacheTorrent) Search(ctx context.Context, originalQuery, alt string) (
 	query = formatQuery(query)
 	// Extract links from search results (.capa_lista elements)
 	var links []string
+	cleanQ := CleanAndCutTitle(query)
 	doc.Find(".capaname").Each(func(i int, s *goquery.Selection) {
 		aTag := s.Find("h2 a")
 		href, hasHref := aTag.Attr("href")
@@ -102,7 +100,7 @@ func (a *ApacheTorrent) Search(ctx context.Context, originalQuery, alt string) (
 			return
 		}
 		// Perform title validation checks
-		if !IsValidPrefix(query, year, title) || !seasonRe.MatchString(originalQuery) && strings.Contains(title, "emporada") {
+		if !IsValidPrefix(cleanQ, year, title) || !seasonRe.MatchString(originalQuery) && strings.Contains(title, "emporada") {
 			return
 		}
 		links = append(links, href)
@@ -236,39 +234,20 @@ func init() {
 }
 
 func (a *ApacheTorrent) processLinksWithQueue(ctx context.Context, links []string) []types.Result {
-	resultsCh := make(chan []types.Result)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5) // Limit concurrency - 5 simultaneous requests
-
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
-	for _, link := range links {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
 
-			item, err := a.scrapeDetailPage(ctx, link, seen, &mu)
-			if err == nil && len(item) > 0 {
-				resultsCh <- item
-			}
-		}(link)
-	}
-
-	// Close results channel once all goroutines complete
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+	nestedResults := runParallelJobs(ctx, links, 5, func(ctx context.Context, l string) ([]types.Result, bool) {
+		item, err := a.scrapeDetailPage(ctx, l, seen, &mu)
+		if err == nil && len(item) == 0 {
+			return nil, false
+		}
+		return item, true
+	})
 
 	// Collect results
 	var results []types.Result
-	for item := range resultsCh {
+	for _, item := range nestedResults {
 		results = append(results, item...)
 	}
 	return results

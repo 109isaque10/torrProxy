@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -85,18 +84,17 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 		return nil, fmt.Errorf("error parsing search page HTML: %w", err)
 	}
 
-	resultsCh := make(chan []types.Result)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5)
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
+	var jobs []types.Job
+	cleanQ := CleanAndCutTitle(query)
 	doc.Find("div.item div.title a").EachWithBreak(func(i int, s *goquery.Selection) bool {
 		if i > POSTSLIMIT {
 			return false
 		}
 
 		title := strings.TrimSpace(s.Text())
-		if title == "" || !IsValidPrefix(query, "", title) {
+		if title == "" || !IsValidPrefix(cleanQ, "", title) {
 			return true
 		}
 
@@ -105,37 +103,22 @@ func (b *BaixeTorrents) Search(ctx context.Context, query, alt string) ([]types.
 			return true
 		}
 
-		wg.Add(1)
-		go func(urlStr, tStr string) {
-			defer wg.Done()
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
-
-			torrents, err := b.parseDetailPage(ctx, urlStr, tStr, seen, &mu)
-			if err == nil && len(torrents) > 0 {
-				select {
-				case resultsCh <- torrents:
-				case <-ctx.Done():
-				}
-			}
-		}(pageURL, title)
+		jobs = append(jobs, types.Job{URL: pageURL, Title: title})
 
 		return true
 	})
 
-	// Close results channel once all goroutines complete
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+	nestedResults := runParallelJobs(ctx, jobs, 5, func(ctx context.Context, j types.Job) ([]types.Result, bool) {
+		torrents, err := b.parseDetailPage(ctx, j.URL, j.Title, seen, &mu)
+		if err == nil && len(torrents) == 0 {
+			return nil, false
+		}
+		return torrents, true
+	})
 
 	// Collect results
 	var results []types.Result
-	for item := range resultsCh {
+	for _, item := range nestedResults {
 		results = append(results, item...)
 	}
 
@@ -217,8 +200,7 @@ func (b *BaixeTorrents) parseDetailPage(ctx context.Context, detailURL, baseTitl
 }
 
 func extractSize(text string) string {
-	re := regexp.MustCompile(`(?i)\b(\d+(?:[\.,]\d+)?\s*(?:GB|MB|TB|KB))\b`)
-	match := re.FindStringSubmatch(text)
+	match := sizeRe.FindStringSubmatch(text)
 	if len(match) > 1 {
 		return strings.ToUpper(strings.TrimSpace(match[1]))
 	}

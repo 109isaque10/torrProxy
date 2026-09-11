@@ -210,7 +210,6 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		fmt.Println(string(body))
 		return nil, fmt.Errorf("unexpected status code on search: %d\nbody: %s", resp.StatusCode, string(body))
 	}
 

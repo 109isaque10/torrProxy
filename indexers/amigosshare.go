@@ -307,6 +307,7 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 	out := make([]types.Result, 0)
 	selector := "div#fancy-list-group ul.list-group li.list-group-item"
 
+	cleanQ := CleanAndCutTitle(query)
 	doc.Find(selector).Each(func(i int, s *goquery.Selection) {
 		// Freeleech filter: YAML used :has(span.badge-success:contains("FREE"))
 		if a.Freeleech && s.Find("span.badge-success:contains('FREE')").Length() == 0 {
@@ -333,7 +334,7 @@ func (a *AmigosShareIndexer) Search(ctx context.Context, query, alt string) ([]t
 		title = cleanTitle(title, year, quality, language)
 
 		// Perform title validation checks
-		if !IsValidPrefix(query, queryYear, title) || !seasonRe.MatchString(query) && seasonRe.MatchString(title) {
+		if !IsValidPrefix(cleanQ, queryYear, title) || !seasonRe.MatchString(query) && seasonRe.MatchString(title) {
 			return
 		}
 

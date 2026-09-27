@@ -91,7 +91,7 @@ func (r *RedeTorrent) Search(ctx context.Context, originalQuery, alt string) ([]
 		return nil, err
 	}
 
-	query = formatQuery(query)
+	query = strings.ReplaceAll(query, "complet", "")
 	// Extract links from search results (.capa_lista elements)
 	var links []string
 	cleanQ := CleanAndCutTitle(query)

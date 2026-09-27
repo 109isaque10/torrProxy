@@ -91,10 +91,12 @@ type loginResponse struct {
 }
 
 type ottherSearchResult struct {
-	Results []struct {
-		ID   string `json:"id"`
-		Nome string `json:"nome"`
-	} `json:"results"`
+	Results []ottherResult `json:"results"`
+}
+
+type ottherResult struct {
+	ID   string `json:"id"`
+	Nome string `json:"nome"`
 }
 
 type ottherPost struct {
@@ -218,60 +220,28 @@ func (o *Otther) Search(ctx context.Context, query, alt string) ([]types.Result,
 		return nil, fmt.Errorf("failed to parse search results: %w", err)
 	}
 
-	resultsCh := make(chan []types.Result)
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 5)
-
 	var mu sync.Mutex
 	seen := make(map[string]struct{})
 
-	for _, item := range searchData.Results {
-		if item.ID == "" {
-			continue
-		}
-
+	nestedResults := runParallelJobs(ctx, searchData.Results, 5, func(ctx context.Context, item ottherResult) ([]types.Result, bool) {
 		mu.Lock()
 		if _, exists := seen[item.ID]; exists {
 			mu.Unlock()
-			continue
+			return nil, false
 		}
 		seen[item.ID] = struct{}{}
 		mu.Unlock()
 
-		wg.Add(1)
-		go func(id, name string) {
-			defer wg.Done()
-
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				return
-			}
-
-			postResult, err := o.fetchPostDetails(ctx, id, name)
-			if err != nil {
-				zap.L().Debug("got error on post details", zap.Error(err), zap.String("id", id), zap.String("name", name))
-				return
-			}
-
-			if len(postResult) > 0 {
-				select {
-				case resultsCh <- postResult:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}(item.ID, item.Nome)
-	}
-
-	go func() {
-		wg.Wait()
-		close(resultsCh)
-	}()
+		postResult, err := o.fetchPostDetails(ctx, item.ID, item.Nome)
+		if err != nil || len(postResult) == 0 {
+			zap.L().Debug("got error on post details", zap.Error(err), zap.String("id", item.ID), zap.String("name", item.Nome))
+			return nil, false
+		}
+		return postResult, true
+	})
 
 	var results []types.Result
-	for item := range resultsCh {
+	for _, item := range nestedResults {
 		results = append(results, item...)
 	}
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,6 +12,7 @@ import (
 	"torrProxy/indexers"
 	"torrProxy/types"
 
+	"github.com/goccy/go-json"
 	_ "github.com/joho/godotenv/autoload"
 	_ "golang.org/x/crypto/x509roots/fallback"
 
@@ -44,7 +45,7 @@ func authenticateIndexers() {
 		go func(idx types.Indexer) {
 			if authIdx, ok := idx.(types.AuthenticatedIndexer); ok {
 				if err := authIdx.EnsureLoggedIn(); err != nil {
-					zap.L().Error(idx.Name() + " login failed, disabling it!")
+					zap.L().Error(" login failed, disabling indexer!", zap.String("indexer", idx.Name()), zap.Error(err))
 					authIdx.SetAuth(false)
 					return
 				}
@@ -61,10 +62,12 @@ func main() {
 
 	addr := ":8090"
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		Addr:              addr,
+		Handler:           mux,
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       30 * time.Second,
 	}
 
 	// Ping all indexers every 30 minutes
@@ -103,7 +106,9 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		// comma-separated names
 		requested := map[string]bool{}
 		for nm := range strings.SplitSeq(indexerParam, ",") {
-			requested[types.FindIndexer(strings.TrimSpace(nm)).Id()] = true
+			if idx := types.FindIndexer(strings.TrimSpace(nm)); idx != nil {
+				requested[idx.Id()] = true
+			}
 		}
 		for _, idx := range types.Indexers {
 			if requested[idx.Id()] && idx.IsEnabled() {
@@ -125,7 +130,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	type backendResp struct {
 		Indexer string
 		Results []types.Result
-		Error   string
+		Error   error
 	}
 	ch := make(chan backendResp, len(toSearch))
 
@@ -135,8 +140,8 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			results, err := idx.Search(ctx, q, alt)
 			br := backendResp{Indexer: idx.Name(), Results: results}
 			if err != nil {
-				br.Error = err.Error()
-				if strings.Contains(err.Error(), "no need") {
+				br.Error = err
+				if errors.Is(err, indexers.ErrNoNeed) {
 					zap.L().Warn("Skipping some searches", zap.String("indexer", idx.Name()), zap.Error(err))
 				} else {
 					zap.L().Error("Search error", zap.String("indexer", idx.Name()), zap.Error(err))
@@ -148,7 +153,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			case <-ctx.Done():
 				// context done; try to send a failure record
 				select {
-				case ch <- backendResp{Indexer: idx.Name(), Error: ctx.Err().Error()}:
+				case ch <- backendResp{Indexer: idx.Name(), Error: ctx.Err()}:
 				default:
 				}
 			}
@@ -165,8 +170,8 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < len(toSearch); i++ {
 		select {
 		case br := <-ch:
-			if br.Error != "" && !strings.Contains(br.Error, "no need") {
-				errs = append(errs, br.Indexer+": "+br.Error)
+			if br.Error != nil && errors.Is(br.Error, indexers.ErrNoNeed) {
+				errs = append(errs, br.Indexer+": "+indexers.ErrNoNeed.Error())
 				continue
 			}
 			for _, r := range br.Results {

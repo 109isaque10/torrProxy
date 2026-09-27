@@ -87,7 +87,7 @@ func (a *ApacheTorrent) Search(ctx context.Context, originalQuery, alt string) (
 		return nil, err
 	}
 
-	query = formatQuery(query)
+	query = strings.ReplaceAll(query, "complet", "")
 	// Extract links from search results (.capa_lista elements)
 	var links []string
 	cleanQ := CleanAndCutTitle(query)
@@ -149,10 +149,6 @@ func (a *ApacheTorrent) scrapeDetailPage(ctx context.Context, url string, seen m
 			return
 		}
 		magnets = append(magnets, magnetLink)
-		itemTitle, exists := s.Attr("title")
-		if !exists || itemTitle == "" {
-			return
-		}
 	})
 
 	var size string

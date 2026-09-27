@@ -2,6 +2,7 @@ package indexers
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"path"
@@ -32,6 +33,10 @@ var (
 	sizeRe       = re2.MustCompile(`(?i)\b((?:\d+[\.,]\d+)?\s(?:GB|MB|TB|KB))\b`)
 )
 
+var (
+	ErrNoNeed = errors.New("no need to search for packs")
+)
+
 //
 // Helpers reused by indexers
 //
@@ -49,14 +54,6 @@ func ExtractInfoHash(magnet string) string {
 		return strings.ToLower(matches[1])
 	}
 	return ""
-}
-
-func formatQuery(q string) string {
-	// For TV shows, convert "S01E02" to "S0X02" to match site format
-	q = strings.ToLower(q)
-	q = strings.ReplaceAll(q, " complet", "")
-	q = seasonRe.ReplaceAllString(q, "")
-	return q
 }
 
 func keywordPreprocess(q string) (string, string) {

@@ -34,6 +34,8 @@ type AmigosShareIndexer struct {
 	loginOnce sync.Once
 	loginErr  error
 
+	initOnce sync.Once
+
 	cache *ttlcache.Cache[string, any]
 }
 
@@ -66,9 +68,11 @@ func newAmigosClient() *http.Client {
 }
 
 func (a *AmigosShareIndexer) EnsureClient() {
-	if a.Client == nil {
-		a.Client = newAmigosClient()
-	}
+	a.initOnce.Do(func() {
+		if a.Client == nil {
+			a.Client = newAmigosClient()
+		}
+	})
 }
 
 //func (a *AmigosShareIndexer) EnsureLogin(ctx context.Context) error {
